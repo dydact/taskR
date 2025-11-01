@@ -1,0 +1,217 @@
+{
+  "generated_at": "2025-10-02T17:58:18.917574+00:00",
+  "providers": [
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://toolfront.api.dydact.io",
+        "edge": "http://localhost:3002"
+      },
+      "id": "doc.ingest",
+      "operations": [
+        "ingest",
+        "search",
+        "summarize",
+        "list",
+        "delete"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://toolfront.api.dydact.io",
+        "edge": "http://localhost:3002"
+      },
+      "id": "docs",
+      "operations": [
+        "search"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://embedder.api.dydact.io",
+        "edge": "http://localhost:9071"
+      },
+      "id": "embedder",
+      "operations": [
+        "embed"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": [
+          "automation"
+        ]
+      },
+      "endpoints": {
+        "cloud": "https://exo.api.dydact.io",
+        "edge": "http://localhost:4010"
+      },
+      "id": "exo.jobs",
+      "operations": [
+        "enqueue",
+        "submit",
+        "create",
+        "status",
+        "list",
+        "complete",
+        "fail"
+      ],
+      "policy_notes": [
+        "Requires Exo cluster token; enforce job governance policies."
+      ],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": null,
+        "edge": null
+      },
+      "id": "guard.llamaguard2",
+      "operations": [
+        "moderate"
+      ],
+      "policy_notes": [
+        "Moderation output is subject to Llama Guard policies."
+      ],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://insight.api.dydact.io",
+        "edge": "http://localhost:8001"
+      },
+      "id": "insight.llm",
+      "operations": [
+        "invoke",
+        "chat",
+        "stream"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://insight.api.dydact.io",
+        "edge": "http://localhost:3003"
+      },
+      "id": "insight.search",
+      "operations": [
+        "search"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": null,
+        "edge": null
+      },
+      "id": "iris.vision",
+      "operations": [
+        "caption",
+        "describe",
+        "detect",
+        "analyze"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": "https://toolfront.api.dydact.io",
+        "edge": "http://localhost:3002"
+      },
+      "id": "notes_dir",
+      "operations": [
+        "sync",
+        "list"
+      ],
+      "policy_notes": [],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": []
+      },
+      "endpoints": {
+        "cloud": null,
+        "edge": null
+      },
+      "id": "redact.presidio",
+      "operations": [
+        "detect",
+        "redact"
+      ],
+      "policy_notes": [
+        "PII detection/redaction service; ensure compliance scopes."
+      ],
+      "schema_ids": []
+    },
+    {
+      "default_binding": {
+        "config": {},
+        "scopes": [
+          "automation"
+        ]
+      },
+      "endpoints": {
+        "cloud": "https://umbra.api.dydact.io",
+        "edge": "http://localhost:3012"
+      },
+      "id": "umbra.computer_use",
+      "operations": [
+        "execute",
+        "status",
+        "update"
+      ],
+      "policy_notes": [
+        "Requires Umbra automation capability assignments."
+      ],
+      "schema_ids": []
+    }
+  ],
+  "source": "vNdydact",
+  "toolfront_base": {
+    "cloud": "https://toolfront.api.dydact.io",
+    "edge": "http://localhost:3002"
+  }
+}

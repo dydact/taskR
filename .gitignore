@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Node
+node_modules/
+dist/
+.next/
+
+# Env & tooling
+.env
+.env.*
+.venv/
+venv/
+.poetry/
+.pdm.toml
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# TaskR build artefacts
+wip/
+logs/
+/tmp/
+

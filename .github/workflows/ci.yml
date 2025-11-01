@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r services/api/requirements.txt
+          if [ -d ../toolfront_registry_client ]; then
+            python -m pip install -e ../toolfront_registry_client
+          fi
+
+      - name: Check ToolFront manifest drift
+        run: ./scripts/check_toolfront_manifest.sh
+
+      - name: Run API tests
+        env:
+          PYTHONPATH: "../toolfront_registry_client"
+        run: |
+          python -m pytest services/api/tests

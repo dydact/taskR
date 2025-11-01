@@ -1,0 +1,17 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+SQLAlchemy==2.0.30
+greenlet==3.0.3
+psycopg[binary]==3.2.9
+alembic==1.13.1
+asyncpg==0.29.0
+pydantic==2.7.1
+pydantic-settings==2.3.1
+python-dotenv==1.0.1
+nats-py==2.7.2
+redis==5.0.4
+httpx==0.27.0
+orjson==3.10.1
+PyJWT==2.8.0
+prometheus-client==0.20.0
+-e ../../toolfront_registry_client
