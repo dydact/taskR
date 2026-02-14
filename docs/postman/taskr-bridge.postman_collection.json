@@ -1,0 +1,169 @@
+{
+  "info": {
+    "name": "TaskR Bridge API",
+    "_postman_id": "0d7aa9dc-2c73-43fb-9e32-9a4ad1d6f435",
+    "description": "Sample requests for the feature-flagged TaskR /bridge endpoints.\nSet `TR_BRIDGE_SCHEDULE_ENABLED=true`, run migrations (0010/0011), and\nconfigure Authorization header / X-Tenant-Id before executing.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Schedule Entries",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          },
+          {
+            "key": "X-Tenant-Id",
+            "value": "{{tenant_id}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/bridge/schedule?start={{start}}&end={{end}}",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "schedule"],
+          "query": [
+            { "key": "start", "value": "{{start}}", "disabled": false },
+            { "key": "end", "value": "{{end}}", "disabled": false }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Worklog",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"worked_start\": \"{{worked_start}}\",\n  \"worked_end\": \"{{worked_end}}\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/bridge/schedule/{{session_id}}/worklog",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "schedule", "{{session_id}}", "worklog"]
+        }
+      }
+    },
+    {
+      "name": "Lock Schedule Entry",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"approved\",\n  \"lock_metadata\": {\n    \"approved_by\": \"admin\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/bridge/schedule/{{session_id}}/lock",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "schedule", "{{session_id}}", "lock"]
+        }
+      }
+    },
+    {
+      "name": "Billing Preview",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/bridge/billing/preview?timeline_id={{timeline_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "billing", "preview"],
+          "query": [
+            { "key": "timeline_id", "value": "{{timeline_id}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Mark Exported",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"timeline_id\": \"{{timeline_id}}\",\n  \"transport_job_id\": \"{{transport_job_id}}\",\n  \"metadata\": {\n    \"exporter\": \"taskr\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/bridge/billing/export",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "billing", "export"]
+        }
+      }
+    },
+    {
+      "name": "Update Claim Status",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"timeline_id\": \"{{timeline_id}}\",\n  \"claim_id\": \"{{claim_id}}\",\n  \"status\": \"submitted\",\n  \"status_message\": \"Sent to clearinghouse\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/bridge/claims/status",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "claims", "status"]
+        }
+      }
+    },
+    {
+      "name": "Payroll Reconcile",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"payroll_entry_id\": \"{{payroll_entry_id}}\",\n  \"timeline_ids\": [\"{{timeline_id}}\"],\n  \"status\": \"paid\",\n  \"metadata\": {\n    \"batch\": \"PR-2025-01\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/bridge/payroll/reconcile",
+          "host": ["{{base_url}}"],
+          "path": ["bridge", "payroll", "reconcile"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "token", "value": "dev-token" },
+    { "key": "tenant_id", "value": "demo-tenant" },
+    { "key": "start", "value": "" },
+    { "key": "end", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "worked_start", "value": "" },
+    { "key": "worked_end", "value": "" },
+    { "key": "timeline_id", "value": "" },
+    { "key": "transport_job_id", "value": "" },
+    { "key": "claim_id", "value": "" },
+    { "key": "payroll_entry_id", "value": "" }
+  ]
+}

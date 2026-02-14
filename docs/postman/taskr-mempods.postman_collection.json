@@ -1,0 +1,76 @@
+{
+  "info": {
+    "name": "TaskR memPODS Ingestion",
+    "_postman_id": "a33287fb-60f5-4769-bfb9-402cad2315b9",
+    "description": "Collection for verifying TaskR memPODS ingestion & retrieval endpoints.\nRequires memPODS service running and memPODS feature flag enabled.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Dossiers",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/memories/dossiers?type=task",
+          "host": ["{{base_url}}"],
+          "path": ["memories", "dossiers"],
+          "query": [
+            { "key": "type", "value": "task" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Ingest Task Memory",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"task_id\": \"{{task_id}}\",\n  \"title\": \"Sample Task\",\n  \"summary\": \"Auto-ingested task summary for memPODS\",\n  \"updated_at\": \"{{timestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/memories/tasks/ingest",
+          "host": ["{{base_url}}"],
+          "path": ["memories", "tasks", "ingest"]
+        }
+      }
+    },
+    {
+      "name": "Query Assistant",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What changed in Project X this week?\",\n  \"context\": {\n    \"project_id\": \"{{project_id}}\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assistant/query",
+          "host": ["{{base_url}}"],
+          "path": ["assistant", "query"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "token", "value": "dev-token" },
+    { "key": "tenant_id", "value": "demo" },
+    { "key": "task_id", "value": "00000000-0000-0000-0000-000000000000" },
+    { "key": "project_id", "value": "00000000-0000-0000-0000-000000000000" },
+    { "key": "timestamp", "value": "2025-01-01T12:00:00Z" }
+  ]
+}

@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Iterable, Optional
+
+from fastapi import Header, HTTPException, Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+
+@dataclass
+class TenantHeaders:
+    tenant_id: str
+    request_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    user_id: Optional[str] = None
+    scopes: tuple[str, ...] = ()
+    token_balance: Optional[Decimal] = None
+
+
+def _normalize_scopes(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        tokens = raw.replace(",", " ").split()
+    elif isinstance(raw, Iterable):
+        tokens = []
+        for item in raw:
+            if item is None:
+                continue
+            tokens.extend(str(item).replace(",", " ").split())
+    else:
+        return ()
+    seen: dict[str, None] = {}
+    for token in tokens:
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        if cleaned not in seen:
+            seen[cleaned] = None
+    return tuple(seen.keys())
+
+
+def _parse_token_balance(raw: object) -> Optional[Decimal]:
+    if raw is None:
+        return None
+    if isinstance(raw, Decimal):
+        return raw
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _extract_claims(request: Request | None) -> dict[str, object]:
+    if request is None:
+        return {}
+    state = getattr(request, "state", None)
+    if state is None:
+        return {}
+    for attr in ("token_claims", "auth_claims", "jwt_claims", "claims"):
+        maybe = getattr(state, attr, None)
+        if maybe:
+            if isinstance(maybe, dict):
+                return dict(maybe)
+            if hasattr(maybe, "model_dump"):
+                return dict(maybe.model_dump())
+            if hasattr(maybe, "dict"):
+                return dict(maybe.dict())  # type: ignore[call-arg]
+            if hasattr(maybe, "items"):
+                return dict(maybe.items())
+    return {}
+
+
+async def get_tenant_headers(
+    request: Request,
+    x_tenant_id: str | None = Header(default=None, alias="x-tenant-id"),
+    x_scr_tenant: str | None = Header(default=None, alias="X-SCR-Tenant"),
+    x_request_id: str | None = Header(default=None, alias="x-request-id"),
+    idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
+    x_user_id: str | None = Header(default=None, alias="x-user-id"),
+    x_scopes: str | None = Header(default=None, alias="x-scopes"),
+    x_token_balance: str | None = Header(default=None, alias="x-token-balance"),
+) -> TenantHeaders:
+    claims = _extract_claims(request)
+    tenant_id = claims.get("tenant") or claims.get("tid")
+    if isinstance(tenant_id, dict):
+        tenant_id = tenant_id.get("id") or tenant_id.get("slug")
+    if tenant_id is None:
+        tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_id = tenant_id or x_tenant_id or x_scr_tenant
+
+    if tenant_id is None:
+        raise HTTPException(status_code=400, detail={"error": "missing_tenant"})
+
+    user_id = claims.get("sub") or claims.get("user_id")
+    if user_id is None:
+        user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        user_id = x_user_id
+
+    scope_source = (
+        claims.get("scopes")
+        or claims.get("scope")
+        or getattr(request.state, "scopes", None)
+        or x_scopes
+    )
+    scopes = _normalize_scopes(scope_source)
+
+    balance_source = (
+        claims.get("token_balance")
+        or claims.get("balance")
+        or claims.get("dat_balance")
+        or getattr(request.state, "token_balance", None)
+        or x_token_balance
+    )
+    token_balance = _parse_token_balance(balance_source)
+
+    return TenantHeaders(
+        tenant_id=tenant_id,
+        request_id=x_request_id,
+        idempotency_key=idempotency_key,
+        user_id=str(user_id) if user_id is not None else None,
+        scopes=scopes,
+        token_balance=token_balance,
+    )
+
+
+class _TenantMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        tenant = request.headers.get("x-tenant-id") or request.headers.get("x-scr-tenant")
+        if tenant is None:
+            return JSONResponse(status_code=400, content={"error": "missing_tenant"})
+        request.state.tenant_id = tenant
+        request.state.scopes = _normalize_scopes(request.headers.get("x-scopes"))
+        request.state.token_balance = _parse_token_balance(request.headers.get("x-token-balance"))
+        return await call_next(request)
+
+
+def add_tenant_middleware(app) -> None:
+    app.add_middleware(_TenantMiddleware)
+
+
+__all__ = ["TenantHeaders", "add_tenant_middleware", "get_tenant_headers"]

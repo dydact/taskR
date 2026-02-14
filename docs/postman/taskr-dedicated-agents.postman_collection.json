@@ -1,0 +1,130 @@
+{
+  "info": {
+    "name": "TaskR Dedicated Agent Bridge",
+    "_postman_id": "e2b75f19-1c34-4b24-954c-6be83c1f9a4d",
+    "description": "Sample requests for the feature-flagged TaskR /dedicated endpoints. Ensure the `dedicated.agents` feature flag is enabled and migrations 0012+ are applied before exercising these requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Assignments",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/dedicated/assignments?status={{status}}",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "assignments"],
+          "query": [
+            { "key": "status", "value": "{{status}}", "disabled": true },
+            { "key": "agent_slug", "value": "{{agent_slug}}", "disabled": true },
+            { "key": "node_id", "value": "{{node_id}}", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Upsert Assignment",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assignment_id\": \"{{assignment_id}}\",\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"agent_slug\": \"xoxo.demo\",\n  \"agent_version\": \"2025.01\",\n  \"status\": \"reserved\",\n  \"priority\": \"normal\",\n  \"service_owner\": \"taskr\",\n  \"node_id\": null,\n  \"overlay\": {\n    \"overlay_id\": \"demo-overlay\",\n    \"overlay_type\": \"persona\",\n    \"label\": \"Demo Overlay\"\n  },\n  \"capabilities\": {\n    \"cpu\": \"8\",\n    \"memory_gb\": 32,\n    \"gpu\": \"L4\"\n  },\n  \"model\": {\n    \"family\": \"dydact-mini\",\n    \"size\": \"8B\"\n  },\n  \"prompt_profile\": {\n    \"initial_prompt\": \"You are a dedicated agent.\"\n  },\n  \"feature_flags\": [\"demo\"],\n  \"tags\": [\"stubbed\"],\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/dedicated/assignments",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "assignments"]
+        }
+      }
+    },
+    {
+      "name": "List Assignment Events",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/dedicated/assignments/{{assignment_id}}/events?limit=50",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "assignments", "{{assignment_id}}", "events"],
+          "query": [
+            { "key": "limit", "value": "50" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Ingest Assignment Event",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"event_id\": \"{{event_id}}\",\n  \"assignment_id\": \"{{assignment_id}}\",\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"event_type\": \"assignment.status_changed\",\n  \"occurred_at\": \"{{occurred_at}}\",\n  \"payload\": {\n    \"status\": \"active\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/dedicated/events",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "events"]
+        }
+      }
+    },
+    {
+      "name": "Seed Demo Assignment (local only)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/dedicated/stubs/assignment",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "stubs", "assignment"]
+        }
+      }
+    },
+    {
+      "name": "Assignment Stream (SSE)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "text/event-stream" },
+          { "key": "Authorization", "value": "Bearer {{token}}", "type": "text" },
+          { "key": "X-Tenant-Id", "value": "{{tenant_id}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/dedicated/assignments/stream",
+          "host": ["{{base_url}}"],
+          "path": ["dedicated", "assignments", "stream"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "token", "value": "dev-token" },
+    { "key": "tenant_id", "value": "demo" },
+    { "key": "assignment_id", "value": "00000000-0000-0000-0000-000000000001" },
+    { "key": "event_id", "value": "00000000-0000-0000-0000-000000000101" },
+    { "key": "occurred_at", "value": "2025-01-01T00:00:00Z" },
+    { "key": "status", "value": "" },
+    { "key": "agent_slug", "value": "" },
+    { "key": "node_id", "value": "" }
+  ]
+}
