@@ -17,4 +17,4 @@ platform/taskR/
 └── .gitignore
 ```
 
-The layout mirrors the conventions used in `platform/vNdydact` to make cross-repo contributions straightforward.
+The layout mirrors the conventions used in `platform/dydact` to make cross-repo contributions straightforward.

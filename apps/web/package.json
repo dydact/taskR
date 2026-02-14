@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@dydact/taskr-api-client": "file:../../packages/api-client-ts",
-    "@dydact/control-center": "workspace:*",
+    "@dydact/control-center": "file:../../shared-packages/dydact-control-center-0.1.0.tgz",
     "@dnd-kit/core": "^6.0.8",
     "@dnd-kit/sortable": "^7.0.2",
     "@dnd-kit/utilities": "^3.2.1",

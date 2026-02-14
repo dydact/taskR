@@ -3,6 +3,9 @@
   import react from '@vitejs/plugin-react-swc';
   import path from 'path';
 
+  const SCR_PROXY_TARGET = process.env.TASKR_SCR_PROXY_TARGET || 'https://scr.local';
+  const TASKR_PROXY_TARGET = process.env.TASKR_API_URL || process.env.TASKR_API_BASE || 'http://127.0.0.1:8010';
+
   export default defineConfig({
     plugins: [react()],
     resolve: {
@@ -56,7 +59,21 @@
       outDir: 'build',
     },
     server: {
-      port: 3000,
+      port: 5175,
       open: true,
+      proxy: {
+        '/api': {
+          target: TASKR_PROXY_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+        '/scr': {
+          target: SCR_PROXY_TARGET,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/scr/, ''),
+        },
+      },
     },
   });

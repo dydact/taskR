@@ -1,4 +1,16 @@
-export type ViewMode = "list" | "board" | "calendar" | "dashboard" | "claims" | "hr";
+export type ViewMode =
+  | "list"
+  | "board"
+  | "calendar"
+  | "dashboard"
+  | "claims"
+  | "hr"
+  | "xoxo"
+  | "gantt"
+  | "inbox"
+  | "goals"
+  | "docs"
+  | "dedicated";
 
 export type DensityMode = "comfortable" | "compact" | "table";
 
@@ -14,4 +26,5 @@ export type ShellPreferences = {
   rightPanelOpen: boolean;
   aiPersona: AiPersona;
   listViewColumns: Record<string, boolean>;
+  aiEnhanced: boolean;
 };

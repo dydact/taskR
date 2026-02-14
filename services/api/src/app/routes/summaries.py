@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Optional
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.deps import get_db_session
 from common_auth import TenantHeaders, get_tenant_headers
 from app.events.bus import event_bus
+from app.services.digests import generate_digest
+from app.schemas import DigestRequest, DigestResponse
 from app.utils.http import post_with_retry
 
 router = APIRouter(prefix="/summaries", tags=["summaries"])
@@ -231,3 +236,39 @@ async def summarize_autopm(
         }
     )
     return data
+
+
+@router.post("/digest", response_model=DigestResponse)
+async def create_digest_summary(
+    payload: DigestRequest,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> DigestResponse:
+    period_end = payload.period_end or datetime.now(UTC)
+    period_start = payload.period_start or (period_end - timedelta(days=1))
+    tenant_id = uuid.UUID(headers.tenant_id)
+
+    digest = await generate_digest(
+        session,
+        tenant_id,
+        team_id=payload.team_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    await event_bus.publish(
+        {
+            "type": "taskr.digest.generated",
+            "tenant_id": str(tenant_id),
+            "digest_id": str(digest.digest_id),
+            "team_id": str(payload.team_id) if payload.team_id else None,
+        }
+    )
+
+    return DigestResponse(
+        digest_id=str(digest.digest_id),
+        summary_text=digest.summary_text,
+        metadata=digest.metadata_json,
+        period_start=digest.period_start,
+        period_end=digest.period_end,
+    )

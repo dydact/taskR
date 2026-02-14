@@ -18,6 +18,9 @@ export type NavigationSpace = {
   slug: string;
   name: string;
   color: string | null;
+  metadata_json?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  category: string | null;
   folders: NavigationFolder[];
   root_lists: NavigationList[];
 };

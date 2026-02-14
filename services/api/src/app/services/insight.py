@@ -284,6 +284,18 @@ class InsightClient:
             logger.warning("Insight API request failed: %s", exc)
         return SummaryResult(text=fallback(), source="fallback")
 
+    async def query_assistant(
+        self,
+        *,
+        tenant_id: str,
+        prompt: str,
+        task_profile: str = "general",
+    ) -> Optional[str]:
+        return await self._call_toolfront_llm(
+            tenant_id=tenant_id,
+            prompt=prompt,
+            task_profile=task_profile,
+        )
 
 @lru_cache(maxsize=1)
 def get_insight_client() -> InsightClient:
@@ -306,6 +318,12 @@ async def summarize_autopm(
 ) -> SummaryResult:
     client = get_insight_client()
     return await client.summarize_autopm(tenant_id, task_title, due_at, metadata or {})
+
+
+async def query_assistant(tenant_id: str, prompt: str, *, mode: str = "summary") -> Optional[str]:
+    client = get_insight_client()
+    profile = "reasoning" if (mode or "").lower() == "detail" else "general"
+    return await client.query_assistant(tenant_id=tenant_id, prompt=prompt, task_profile=profile)
 
 
 def summarize_guardrail(

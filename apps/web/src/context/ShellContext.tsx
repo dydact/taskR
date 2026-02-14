@@ -71,10 +71,24 @@ const DEFAULT_PREFERENCES: ShellPreferences = {
   lastView: "list",
   rightPanelOpen: true,
   aiPersona: "balanced",
-  listViewColumns: {}
+  listViewColumns: {},
+  aiEnhanced: false
 };
 
-const VIEW_MODES: ViewMode[] = ["list", "board", "calendar", "dashboard", "claims", "hr"];
+const VIEW_MODES: ViewMode[] = [
+  "list",
+  "board",
+  "calendar",
+  "dashboard",
+  "gantt",
+  "inbox",
+  "goals",
+  "claims",
+  "hr",
+  "docs",
+  "dedicated",
+  "xoxo"
+];
 const DENSITIES: DensityMode[] = ["comfortable", "compact", "table"];
 const THEMES: ThemeMode[] = ["dark", "light"];
 const PERSONAS: AiPersona[] = ["balanced", "detailed", "concise"];
@@ -118,7 +132,11 @@ const resolveShellPreferences = (input?: ApiPreferences | null): ShellPreference
         ? input.right_panel_open
         : DEFAULT_PREFERENCES.rightPanelOpen,
     aiPersona: isPersona(input?.ai_persona) ? input.ai_persona : DEFAULT_PREFERENCES.aiPersona,
-    listViewColumns: columns
+    listViewColumns: columns,
+    aiEnhanced:
+      typeof input?.ai_enhanced === "boolean"
+        ? input.ai_enhanced
+        : DEFAULT_PREFERENCES.aiEnhanced
   };
 };
 
@@ -131,6 +149,7 @@ const mapToApiPatch = (patch: Partial<ShellPreferences>): Partial<ApiPreferences
   if (patch.rightPanelOpen !== undefined) apiPatch.right_panel_open = patch.rightPanelOpen;
   if (patch.aiPersona !== undefined) apiPatch.ai_persona = patch.aiPersona;
   if (patch.listViewColumns !== undefined) apiPatch.list_view_columns = patch.listViewColumns;
+  if (patch.aiEnhanced !== undefined) apiPatch.ai_enhanced = patch.aiEnhanced;
   return apiPatch;
 };
 
@@ -166,6 +185,9 @@ const sanitizeShellPreferencePatch = (patch: Partial<ShellPreferences>): Partial
       }
     });
     sanitized.listViewColumns = nextColumns;
+  }
+  if (patch.aiEnhanced !== undefined) {
+    sanitized.aiEnhanced = Boolean(patch.aiEnhanced);
   }
   return sanitized;
 };

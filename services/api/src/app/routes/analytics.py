@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.deps import get_db_session
-from app.models.core import ListStatus, SpacePlanPoint, Task, User, Worklog
+from app.models.core import AnalyticsEvent, ListStatus, SpacePlanPoint, Task, User, Worklog
 from app.routes.utils import get_list, get_space, get_tenant
 from app.schemas import (
     AnalyticsSummary,
@@ -28,6 +29,7 @@ from app.schemas import (
     VelocitySeries,
     WorkloadEntry,
     WorkloadSummary,
+    AnalyticsEventCreate,
 )
 from common_auth import TenantHeaders, get_tenant_headers
 
@@ -440,46 +442,62 @@ async def throughput_histogram(
 
     async def build() -> dict:
         stmt = (
-            select(Task.updated_at)
+            select(Task.created_at, Task.updated_at, status_alias.is_done)
             .join(
                 status_alias,
                 (status_alias.tenant_id == Task.tenant_id)
                 & (status_alias.list_id == Task.list_id)
                 & (func.lower(status_alias.name) == func.lower(Task.status)),
+                isouter=True,
             )
             .where(
                 Task.tenant_id == tenant.tenant_id,
                 Task.space_id == space.space_id,
-                status_alias.is_done.is_(True),
-                Task.updated_at.is_not(None),
-                Task.updated_at >= cutoff,
+                Task.created_at.is_not(None),
             )
         )
         if list_uuid is not None:
             stmt = stmt.where(Task.list_id == list_uuid)
 
         result = await session.execute(stmt)
-        timestamps = [row.updated_at for row in result.fetchall() if row.updated_at is not None]
+        rows = result.fetchall()
 
-        if not timestamps:
+        if not rows:
             buckets = []
         else:
             start_week = cutoff.date() - timedelta(days=cutoff.date().weekday())
             current_week = datetime.utcnow().date() - timedelta(days=datetime.utcnow().date().weekday())
             week_cursor = start_week
-            bucket_map: dict[tuple[int, int], int] = defaultdict(int)
-            for ts in timestamps:
-                day = ts.date()
-                week_start = day - timedelta(days=day.weekday())
-                key = (week_start.year, week_start.isocalendar().week)
-                bucket_map[key] += 1
+
+            created_map: dict[tuple[int, int], int] = defaultdict(int)
+            completed_map: dict[tuple[int, int], int] = defaultdict(int)
+
+            for row in rows:
+                created_at = row.created_at
+                updated_at = row.updated_at
+                is_done = bool(row.is_done)
+
+                if created_at is not None and created_at >= cutoff:
+                    created_day = created_at.date()
+                    created_week = created_day - timedelta(days=created_day.weekday())
+                    created_key = (created_week.year, created_week.isocalendar().week)
+                    created_map[created_key] += 1
+
+                if is_done and updated_at is not None and updated_at >= cutoff:
+                    completed_day = updated_at.date()
+                    completed_week = completed_day - timedelta(days=completed_day.weekday())
+                    completed_key = (completed_week.year, completed_week.isocalendar().week)
+                    completed_map[completed_key] += 1
 
             buckets: list[dict] = []
             while week_cursor <= current_week:
                 key = (week_cursor.year, week_cursor.isocalendar().week)
-                count = bucket_map.get(key, 0)
                 buckets.append(
-                    ThroughputBucket(week_start=week_cursor, completed=count).model_dump()
+                    ThroughputBucket(
+                        week_start=week_cursor,
+                        completed=completed_map.get(key, 0),
+                        created=created_map.get(key, 0),
+                    ).model_dump()
                 )
                 week_cursor += timedelta(weeks=1)
 
@@ -653,3 +671,25 @@ async def analytics_summary(
 
     data = await analytics_cache.get_or_build(cache_key, build)
     return AnalyticsSummary.model_validate(data)
+
+
+@router.post("/events", status_code=status.HTTP_201_CREATED)
+async def record_analytics_event(
+    payload: AnalyticsEventCreate,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> dict[str, Any]:
+    tenant = await get_tenant(session, headers.tenant_id)
+    occurred_at = payload.occurred_at or datetime.utcnow()
+    if occurred_at.tzinfo is None:
+        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+    row = AnalyticsEvent(
+        tenant_id=tenant.tenant_id,
+        event_type=payload.event_type,
+        payload=payload.payload,
+        occurred_at=occurred_at,
+    )
+    session.add(row)
+    await session.flush()
+    await session.refresh(row)
+    return {"event_id": str(row.event_id)}

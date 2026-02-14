@@ -14,6 +14,7 @@ from app.routes.utils import get_list, get_tenant
 from app.schemas import ActionItemsToTasksRequest, MeetingNoteCreate, MeetingNoteRead, TaskRead
 from app.services.billing import require_feature
 from app.services.insight import summarize_meeting
+from app.services.memory import memory_service
 from app.services.notifications import notification_service
 from app.services.usage import adjust_usage
 from common_auth import TenantHeaders, get_tenant_headers
@@ -91,6 +92,12 @@ async def create_note(
         event_type="meeting.note.created",
     )
     await adjust_usage(session, tenant.tenant_id, "meetings_logged", 1)
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "meeting",
+        note.note_id,
+        session=session,
+    )
     return _note_to_read(note)
 
 
@@ -123,9 +130,9 @@ async def regenerate_note_summary(
     metadata["summary"] = summary_metadata
 
     note.summary = summary_result.text
-   note.metadata_json = metadata
-   await session.flush()
-   await session.refresh(note)
+    note.metadata_json = metadata
+    await session.flush()
+    await session.refresh(note)
     await notification_service.notify_meeting_note(
         tenant.tenant_id,
         note_id=note.note_id,
@@ -144,6 +151,13 @@ async def regenerate_note_summary(
             "summary_id": summary_metadata.get("summary_id"),
             "source": summary_result.source,
         }
+    )
+
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "meeting",
+        note.note_id,
+        session=session,
     )
 
     return _note_to_read(note)
@@ -182,6 +196,12 @@ async def convert_action_items(
         session.add(task)
         await session.flush()
         await session.refresh(task)
+        await memory_service.enqueue(
+            tenant.tenant_id,
+            "task",
+            task.task_id,
+            session=session,
+        )
         created_tasks.append(TaskRead.model_validate(task))
 
     note.metadata_json = {

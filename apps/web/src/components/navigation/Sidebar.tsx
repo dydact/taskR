@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useShell } from "../../context/ShellContext";
+import { useAIFeatures } from "../../hooks/useAIFeatures";
 import type { NavigationFolder, NavigationList } from "../../types/navigation";
+import { AgentWorkersSidebar } from "../agents";
 
 type SidebarProps = {
   selectedListId: string | null;
@@ -8,6 +10,8 @@ type SidebarProps = {
   onSelectList(spaceId: string, listId: string): void;
   listCounts?: Record<string, number>;
   spaceCounts?: Record<string, number>;
+  selectedAgent?: string;
+  onSelectAgent?: (agentSlug: string) => void;
 };
 
 const FolderSection: React.FC<{
@@ -78,10 +82,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectSpace,
   onSelectList,
   listCounts,
-  spaceCounts
+  spaceCounts,
+  selectedAgent,
+  onSelectAgent
 }) => {
   const { spaces, activeSpaceId, setActiveSpace, navigation } = useShell();
+  const { enabled: aiEnabled } = useAIFeatures();
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set());
+  const [agentsCollapsed, setAgentsCollapsed] = useState(false);
 
   useEffect(() => {
     if (activeSpaceId) {
@@ -176,6 +184,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
+      {aiEnabled && onSelectAgent && (
+        <AgentWorkersSidebar
+          selectedAgent={selectedAgent}
+          onSelectAgent={onSelectAgent}
+          isCollapsed={agentsCollapsed}
+          onToggleCollapse={() => setAgentsCollapsed(!agentsCollapsed)}
+        />
+      )}
     </div>
   );
 };

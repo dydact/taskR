@@ -1,6 +1,6 @@
 ## Insight Summaries Contract (TaskR Perspective)
 
-Canonical reference: vNdydact/docs/integrations/insight_summaries_contract.md
+Canonical reference: dydact/docs/integrations/insight_summaries_contract.md
 
 Endpoints (implemented in taskR API):
 - POST `/summaries/meetings`

@@ -18,9 +18,12 @@ type InsightRecord = {
 
 type NotificationRecord = {
   id: string;
-  message: string;
+  message?: string;
+  title?: string;
+  body?: string;
   created_at?: string;
   type?: string;
+  cta_path?: string | null;
 };
 
 type AutomationJob = {
@@ -54,40 +57,68 @@ const PanelChrome: React.FC<{
   const [jobsLoading, setJobsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const featureUnavailable = (err: unknown) => err instanceof ApiError && err.status === 404;
+
   const loadInsights = useCallback(async () => {
     setInsightsLoading(true);
     try {
       const response = await client.request<{ data?: InsightRecord[] }>({ path: "/insights/feed", method: "GET" });
       setInsights(Array.isArray(response?.data) ? response.data : []);
     } catch (err) {
-      if (error === null) {
+      if (featureUnavailable(err)) {
+        setInsights([]);
+      } else {
         const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setError(message);
+        setError((prev) => prev ?? message);
+        setInsights([]);
       }
-      setInsights([]);
     } finally {
       setInsightsLoading(false);
     }
-  }, [client, error]);
+  }, [client]);
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
     try {
       const response = await client.notifications.list();
-      const payload = Array.isArray((response as any)?.data)
+      const raw = Array.isArray((response as any)?.data)
         ? (response as { data: NotificationRecord[] }).data
+        : response;
+      const payload = Array.isArray(raw)
+        ? raw.map((item: any) => {
+            if (item && typeof item === "object" && "message" in item) {
+              return {
+                id: String(item.id ?? ""),
+                message: item.message,
+                created_at: item.created_at,
+                type: item.type,
+                cta_path: item.cta_path ?? null
+              } satisfies NotificationRecord;
+            }
+            return {
+              id: String(item.notification_id ?? item.id ?? ""),
+              title: item.title ?? undefined,
+              body: item.body ?? undefined,
+              message: item.title && item.body ? `${item.title} — ${item.body}` : item.title ?? item.body,
+              created_at: item.created_at,
+              type: item.event_type ?? item.type,
+              cta_path: item.cta_path ?? null
+            } satisfies NotificationRecord;
+          })
         : [];
       setNotifications(payload);
     } catch (err) {
-      if (error === null) {
+      if (featureUnavailable(err)) {
+        setNotifications([]);
+      } else {
         const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setError(message);
+        setError((prev) => prev ?? message);
+        setNotifications([]);
       }
-      setNotifications([]);
     } finally {
       setNotificationsLoading(false);
     }
-  }, [client, error]);
+  }, [client]);
 
   const loadJobs = useCallback(async () => {
     setJobsLoading(true);
@@ -98,15 +129,17 @@ const PanelChrome: React.FC<{
         : [];
       setJobs(payload.slice(0, 10));
     } catch (err) {
-      if (error === null) {
+      if (featureUnavailable(err)) {
+        setJobs([]);
+      } else {
         const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
-        setError(message);
+        setError((prev) => prev ?? message);
+        setJobs([]);
       }
-      setJobs([]);
     } finally {
       setJobsLoading(false);
     }
-  }, [client, error]);
+  }, [client]);
 
   useEffect(() => {
     void loadInsights();
@@ -134,23 +167,27 @@ const PanelChrome: React.FC<{
               Auto
             </TabsTrigger>
           </TabsList>
+          <ScrollArea className="flex-1 p-4">
+            {!hasAnyData && !insightsLoading && !notificationsLoading && !jobsLoading && (
+              <div className={`text-xs ${colors.textSecondary}`}>
+                {error ?? "AI insights, notifications, and automations will appear here once configured."}
+              </div>
+            )}
+            <TabsContent value="ai" className="mt-0">
+              <AIInsights insights={insights} loading={insightsLoading} />
+            </TabsContent>
+            <TabsContent value="notifications" className="mt-0">
+              <Notifications notifications={notifications} loading={notificationsLoading} />
+            </TabsContent>
+            <TabsContent value="automations" className="mt-0">
+              <Automations jobs={jobs} loading={jobsLoading} />
+            </TabsContent>
+          </ScrollArea>
         </Tabs>
       </div>
 
-      <ScrollArea className="flex-1 p-4">
-        {!hasAnyData && !insightsLoading && !notificationsLoading && !jobsLoading && error && (
-          <div className={`text-xs ${colors.textSecondary}`}>{error}</div>
-        )}
-        <TabsContent value="ai" className="mt-0">
-          <AIInsights insights={insights} loading={insightsLoading} />
-        </TabsContent>
-        <TabsContent value="notifications" className="mt-0">
-          <Notifications notifications={notifications} loading={notificationsLoading} />
-        </TabsContent>
-        <TabsContent value="automations" className="mt-0">
-          <Automations jobs={jobs} loading={jobsLoading} />
-        </TabsContent>
-      </ScrollArea>
+      {/* Fallback in case the Tabs context fails to mount */}
+      {!Tabs ? null : null}
     </aside>
   );
 };
@@ -223,7 +260,14 @@ const Notifications: React.FC<{ notifications: NotificationRecord[]; loading: bo
       <h3 className={`${colors.textSecondary} text-[13px] mb-2`}>Notifications</h3>
       {notifications.map((notification) => (
         <div key={notification.id} className={`${isDark ? "bg-white/5" : "bg-white/60"} rounded-xl p-3 border ${isDark ? "border-white/10" : "border-slate-200/60"}`}>
-          <p className={`${colors.text} text-[13px]`}>{notification.message}</p>
+          {notification.title ? (
+            <p className={`${colors.text} text-[13px] font-medium`}>{notification.title}</p>
+          ) : null}
+          {notification.body ? (
+            <p className={`${colors.textSecondary} text-[12px] mt-1`}>{notification.body}</p>
+          ) : notification.message ? (
+            <p className={`${colors.text} text-[13px]`}>{notification.message}</p>
+          ) : null}
           <p className={`${colors.textSecondary} text-[11px] mt-1 opacity-70`}>
             {notification.created_at ? new Date(notification.created_at).toLocaleString() : "Just now"}
           </p>
@@ -269,4 +313,3 @@ const Automations: React.FC<{ jobs: AutomationJob[]; loading: boolean }> = ({ jo
     </div>
   );
 };
-

@@ -1,11 +1,29 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { Home, Inbox, Target, ChevronDown, ChevronRight, MoreHorizontal, Circle, Star } from 'lucide-react';
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  MoreHorizontal,
+  Circle,
+  Star,
+  LayoutDashboard,
+  List,
+  KanbanSquare,
+  Calendar,
+  BarChart3,
+  FileText,
+  Users,
+  ScrollText,
+  Satellite
+} from "lucide-react";
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { useTheme } from './ThemeContext';
 import type { ShellSpace } from '../context/ShellContext';
 import type { NavigationFolder, NavigationList, NavigationSpace } from '../types/navigation';
+import type { ViewMode } from "../types/shell";
+
 
 type LeftNavProps = {
   spaces: ShellSpace[];
@@ -17,6 +35,9 @@ type LeftNavProps = {
   onSelectSpace: (spaceId: string) => void;
   onSelectList: (spaceId: string, listId: string) => void;
   onToggleFavorite: (spaceId: string) => void;
+  viewMode: ViewMode;
+  viewOptions: ViewMode[];
+  onViewModeChange: (mode: ViewMode) => void;
 };
 
 export function LeftNav({
@@ -28,7 +49,10 @@ export function LeftNav({
   selectedListId,
   onSelectSpace,
   onSelectList,
-  onToggleFavorite
+  onToggleFavorite,
+  viewMode,
+  viewOptions,
+  onViewModeChange
 }: LeftNavProps) {
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set(activeSpaceId ? [activeSpaceId] : []));
   const { theme, colors } = useTheme();
@@ -61,14 +85,41 @@ export function LeftNav({
     return navigation;
   }, [navigation]);
 
+  const viewOrder: ViewMode[] = ["dashboard", "list", "board", "calendar", "gantt", "claims", "hr", "dedicated"];
+  const orderedViewModes = viewOrder.filter((mode) => viewOptions.includes(mode));
+
+  const groupedSpaces = useMemo(() => {
+    const order: string[] = [];
+    const groups = new Map<string, ShellSpace[]>();
+    spaces.forEach((space) => {
+      const rawCategory = space.category ? space.category.trim() : "";
+      const key = rawCategory.length > 0 ? rawCategory : "__uncategorized__";
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        order.push(key);
+      }
+      groups.get(key)!.push(space);
+    });
+    return order.map((key) => ({
+      category: key === "__uncategorized__" ? null : key,
+      items: groups.get(key) ?? []
+    }));
+  }, [spaces]);
+
   return (
     <aside className={`w-[270px] ${colors.navBackground} border-r ${colors.navBorder} flex flex-col`}>
       <ScrollArea className="flex-1 px-3 py-4">
         {/* Top Section */}
         <div className="space-y-1 mb-6">
-          <NavItem icon={Home} label="Home" active />
-          <NavItem icon={Inbox} label="Inbox" badge="5" />
-          <NavItem icon={Target} label="Goals" />
+          {orderedViewModes.map((mode) => (
+            <NavItem
+              key={mode}
+              icon={VIEW_ICONS[mode] ?? LayoutDashboard}
+              label={VIEW_LABELS[mode] ?? mode}
+              active={viewMode === mode}
+              onClick={() => onViewModeChange(mode)}
+            />
+          ))}
         </div>
 
         {/* Spaces Section */}
@@ -77,8 +128,15 @@ export function LeftNav({
             <h3 className={`${colors.textSecondary} text-[11px] uppercase tracking-wider opacity-70`}>Spaces</h3>
           </div>
 
-        <div className="space-y-1">
-          {spaces.map((space) => {
+          <div className="space-y-4">
+            {groupedSpaces.map(({ category, items }) => (
+              <div key={category ?? "uncategorized"} className="space-y-1">
+                {category && (
+                  <div className="px-3 mt-2">
+                    <h4 className={`${colors.textSecondary} text-[11px] uppercase tracking-wider opacity-60`}>{category}</h4>
+                  </div>
+                )}
+                {items.map((space) => {
             const isExpanded = expandedSpaces.has(space.spaceId);
             const isActiveSpace = activeSpaceId === space.spaceId;
             const nav = navigationBySpaceId && navigationBySpaceId.space_id === space.spaceId ? navigationBySpaceId : null;
@@ -168,7 +226,9 @@ export function LeftNav({
                   )}
                 </div>
               );
-            })}
+                })}
+              </div>
+            ))}
           </div>
         </div>
       </ScrollArea>
@@ -176,32 +236,52 @@ export function LeftNav({
   );
 }
 
-function NavItem({ 
-  icon: Icon, 
-  label, 
-  active = false, 
-  badge 
-}: { 
-  icon: any; 
-  label: string; 
-  active?: boolean; 
+function NavItem({
+  icon: Icon,
+  label,
+  active = false,
+  badge,
+  preview = false,
+  onClick
+}: {
+  icon: LucideIcon;
+  label: string;
+  active?: boolean;
   badge?: string;
+  preview?: boolean;
+  onClick?: () => void;
 }) {
   const { theme, colors } = useTheme();
-  const isDark = theme === 'dark';
+  const isDark = theme === "dark";
   
   return (
     <div 
       className={`
         flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-180 cursor-pointer
-        ${active 
-          ? `${colors.activeBackground} ${colors.text} shadow-md` 
-          : `${colors.textSecondary} ${isDark ? 'hover:text-white hover:bg-white/10' : 'hover:text-slate-900 hover:bg-slate-100/60'}`
+        ${
+          preview
+            ? `${colors.textSecondary} opacity-60 ${isDark ? "hover:bg-white/5" : "hover:bg-slate-100/50"}`
+            : active
+            ? `${colors.activeBackground} ${colors.text} shadow-md`
+            : `${colors.textSecondary} ${isDark ? "hover:text-white hover:bg-white/10" : "hover:text-slate-900 hover:bg-slate-100/60"}`
         }
       `}
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (!onClick) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
     >
       <Icon className="w-5 h-5" />
-      <span className="flex-1">{label}</span>
+      <span className="flex-1">
+        {label}
+        {preview && <span className="ml-2 text-[10px] uppercase tracking-wide opacity-70">Soon</span>}
+      </span>
       {badge && (
         <Badge 
           variant="secondary" 
@@ -287,4 +367,34 @@ const NavListItem: React.FC<{
       <span className="text-[13px] truncate">{list.name}</span>
     </div>
   );
+};
+
+const VIEW_LABELS: Record<ViewMode, string> = {
+  dashboard: "Dashboard",
+  inbox: "Inbox",
+  goals: "Goals",
+  list: "List",
+  board: "Board",
+  calendar: "Calendar",
+  gantt: "Gantt",
+  claims: "Claims & Services",
+  hr: "HR",
+  docs: "Service Catalogue",
+  dedicated: "Dedicated Agents",
+  xoxo: "xOxO"
+};
+
+const VIEW_ICONS: Partial<Record<ViewMode, LucideIcon>> = {
+  dashboard: LayoutDashboard,
+  inbox: LayoutDashboard,
+  goals: LayoutDashboard,
+  list: List,
+  board: KanbanSquare,
+  calendar: Calendar,
+  gantt: BarChart3,
+  claims: FileText,
+  hr: Users,
+  docs: ScrollText,
+  dedicated: Satellite,
+  xoxo: Satellite
 };

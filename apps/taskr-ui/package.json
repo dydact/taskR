@@ -46,6 +46,7 @@
       "sonner": "^2.0.3",
       "tailwind-merge": "*",
       "vaul": "^1.1.2",
+      "@dydact/control-center": "file:../../shared-packages/dydact-control-center-0.1.0.tgz",
       "@dydact/taskr-api-client": "workspace:*"
   },
       "devDependencies": {

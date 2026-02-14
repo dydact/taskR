@@ -3,8 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, date
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from typing import Any
+
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -154,6 +156,27 @@ class CustomFieldDefinition(TimestampMixin, Base):
         back_populates="field",
         cascade="all, delete-orphan",
     )
+    options: Mapped[list["CustomFieldOption"]] = relationship(
+        "CustomFieldOption",
+        back_populates="field",
+        cascade="all, delete-orphan",
+        order_by="CustomFieldOption.position",
+    )
+
+
+class CustomFieldOption(TimestampMixin, Base):
+    __tablename__ = "tr_custom_field_option"
+    __table_args__ = (Index("ix_tr_custom_field_option_field", "field_id", "position"),)
+
+    option_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_custom_field.field_id"), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    value: Mapped[str] = mapped_column(String(128), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(16))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    field: Mapped["CustomFieldDefinition"] = relationship("CustomFieldDefinition", back_populates="options")
 
 
 class TaskCustomField(TimestampMixin, Base):
@@ -618,7 +641,6 @@ class UserPreference(TimestampMixin, Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     key: Mapped[str] = mapped_column(String(128), nullable=False)
     value_json: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_user.user_id"))
 
     # Note: No relationship to FlowRun; there is no FK from preferences to runs.
 
@@ -790,6 +812,55 @@ class MeetingNote(TimestampMixin, Base):
     event: Mapped["CalendarEvent | None"] = relationship("CalendarEvent", back_populates="meeting_notes")
 
 
+class MemoryQueue(TimestampMixin, Base):
+    __tablename__ = "tr_memory_queue"
+    __table_args__ = (
+        Index("ix_tr_memory_queue_resource", "tenant_id", "resource_type", "resource_id"),
+        Index("ix_tr_memory_queue_status_available", "status", "available_at"),
+        UniqueConstraint("tenant_id", "resource_type", "resource_id", name="ux_tr_memory_queue_resource"),
+    )
+
+    queue_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class MemoryVector(TimestampMixin, Base):
+    __tablename__ = "tr_memory_vector"
+    __table_args__ = (
+        Index("ix_tr_memory_vector_resource", "tenant_id", "resource_type"),
+        UniqueConstraint("tenant_id", "resource_type", "resource_id", name="ux_tr_memory_vector_resource"),
+    )
+
+    vector_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(ARRAY(Float))
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class DigestHistory(TimestampMixin, Base):
+    __tablename__ = "tr_digest_history"
+    __table_args__ = (
+        Index("ix_tr_digest_history_tenant_period", "tenant_id", "team_id", "period_start"),
+    )
+
+    digest_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    team_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
 class SchedulingNegotiation(TimestampMixin, Base):
     __tablename__ = "tr_scheduling_negotiation"
     __table_args__ = (
@@ -898,6 +969,27 @@ class UsageStat(TimestampMixin, Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class SpaceUsageSnapshot(TimestampMixin, Base):
+    __tablename__ = "tr_space_usage_snapshot"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "space_id", "snapshot_date", name="ux_tr_space_usage_snapshot_day"),
+        Index("ix_tr_space_usage_snapshot_tenant_date", "tenant_id", "snapshot_date"),
+    )
+
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    space_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_space.space_id"), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    active_users: Mapped[int] = mapped_column(Integer, default=0)
+    tasks_created: Mapped[int] = mapped_column(Integer, default=0)
+    tasks_completed: Mapped[int] = mapped_column(Integer, default=0)
+    automations_triggered: Mapped[int] = mapped_column(Integer, default=0)
+    command_palette_invocations: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    space: Mapped[Space] = relationship("Space")
+
+
 class NotificationChannel(TimestampMixin, Base):
     __tablename__ = "tr_notification_channel"
     __table_args__ = (
@@ -911,3 +1003,138 @@ class NotificationChannel(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     events: Mapped[list[str]] = mapped_column(JSONB, default=list)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class ScheduleTimeline(TimestampMixin, Base):
+    __tablename__ = "tr_schedule_timeline"
+    __table_args__ = (
+        Index("ux_tr_schedule_timeline_session", "tenant_id", "session_id", unique=True),
+        Index("ix_tr_schedule_timeline_tenant_schedule", "tenant_id", "scheduled_start"),
+        Index("ix_tr_schedule_timeline_staff_date", "tenant_id", "staff_id", "scheduled_start"),
+    )
+
+    timeline_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    staff_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    service_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    authorization_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    cpt_code: Mapped[str | None] = mapped_column(String(32))
+    modifiers: Mapped[list[str]] = mapped_column(ARRAY(String(8)), default=list)
+    scheduled_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scheduled_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    worked_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    worked_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="scheduled")
+    payroll_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    transport_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class Assignment(TimestampMixin, Base):
+    __tablename__ = "tr_assignment"
+    __table_args__ = (
+        Index("ix_tr_assignment_tenant_status", "tenant_id", "status"),
+        Index("ix_tr_assignment_tenant_agent", "tenant_id", "agent_slug"),
+        Index("ix_tr_assignment_tenant_agent_id", "tenant_id", "agent_id"),
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    agent_slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    agent_version: Mapped[str | None] = mapped_column(String(64))
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    department_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    priority: Mapped[str] = mapped_column(String(32), default="normal")
+    service_owner: Mapped[str | None] = mapped_column(String(64))
+    node_id: Mapped[str | None] = mapped_column(String(128))
+    overlay: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    prompt_history: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    polaris_obligations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    capabilities_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    model_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    prompt_profile_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    feature_flags: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    events: Mapped[list["AssignmentEvent"]] = relationship(
+        "AssignmentEvent",
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AssignmentEvent.occurred_at.desc()",
+    )
+
+
+class AssignmentEvent(Base):
+    __tablename__ = "tr_assignment_event"
+    __table_args__ = (
+        Index("ix_tr_assignment_event_assignment", "tenant_id", "assignment_id", "occurred_at"),
+        Index("ix_tr_assignment_event_type", "tenant_id", "event_type"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tr_assignment.assignment_id"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(64))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    assignment: Mapped["Assignment"] = relationship("Assignment", back_populates="events")
+
+
+class Notification(TimestampMixin, Base):
+    __tablename__ = "tr_notification"
+    __table_args__ = (
+        Index("ix_tr_notification_tenant_status", "tenant_id", "status", "created_at"),
+    )
+
+    notification_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    cta_path: Mapped[str | None] = mapped_column(String(255))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="unread")
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AiJob(TimestampMixin, Base):
+    __tablename__ = "tr_ai_job"
+    __table_args__ = (
+        Index("ix_tr_ai_job_tenant_status", "tenant_id", "status", "created_at"),
+    )
+
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    prompt_id: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class AnalyticsEvent(TimestampMixin, Base):
+    __tablename__ = "tr_analytics_event"
+    __table_args__ = (
+        Index("ix_tr_analytics_event_tenant_type", "tenant_id", "event_type", "occurred_at"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tr_tenant.tenant_id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

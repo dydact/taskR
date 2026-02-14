@@ -3,12 +3,12 @@
 Use this checklist when enabling ToolFront-backed providers (e.g., `insight.llm`) in TaskR environments.
 
 1. **Update manifest**
-   - In `platform/vNdydact`, run `make export-toolfront-registry` after any provider change.
+   - In `platform/dydact`, run `make export-toolfront-registry` after any provider change.
    - Copy the refreshed `toolfront-registry/providers.json` into `taskR/toolfront-registry/` and commit.
    - Run `./scripts/check_toolfront_manifest.sh` locally; CI runs the same check and will fail on drift.
 
 2. **Verify dependencies**
-   - Install the shared client locally via `pip install -e ../toolfront_registry_client` (or ensure CI step succeeds).
+   - Install the shared client from the vendored wheel: `pip install ../shared-python/toolfront_registry_client-0.1.0-py3-none-any.whl` (CI uses the same artifact via `services/api/requirements.txt`).
    - Confirm `services/api/tests/test_toolfront_contract.py` passes by providing `TOOLFRONT_BASE_URL`, `TOOLFRONT_API_TOKEN`, `TOOLFRONT_ENV`, and `TOOLFRONT_REGISTRY_PATH`.
 
 3. **Configuration**

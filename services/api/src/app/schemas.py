@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, date
 from typing import Any, ClassVar, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +65,9 @@ class SpaceRead(SpaceBase):
     tenant_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    @computed_field(alias="id")
+    def _id(self) -> uuid.UUID:
+        return self.space_id
 
 
 class FolderBase(BaseModel):
@@ -245,6 +248,8 @@ class NavigationSpace(BaseModel):
     slug: str
     name: str
     color: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    category: str | None = None
     folders: list[NavigationFolder] = Field(default_factory=list)
     root_lists: list[NavigationList] = Field(default_factory=list)
 
@@ -271,6 +276,24 @@ class CommentRead(CommentBase):
     tenant_id: uuid.UUID
     task_id: uuid.UUID
     author_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Activity Schemas
+# ---------------------------------------------------------------------------
+
+
+class ActivityEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: uuid.UUID
+    tenant_id: uuid.UUID
+    task_id: uuid.UUID | None = None
+    actor_id: uuid.UUID | None = None
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -434,8 +457,40 @@ class CustomFieldDefinitionBase(BaseModel):
         return slug
 
 
+class CustomFieldOptionBase(BaseModel):
+    label: str
+    value: str
+    color: str | None = None
+    position: int | None = None
+    is_active: bool = True
+
+
+class CustomFieldOptionCreate(CustomFieldOptionBase):
+    pass
+
+
+class CustomFieldOptionUpdate(BaseModel):
+    label: str | None = None
+    value: str | None = None
+    color: str | None = None
+    position: int | None = None
+    is_active: bool | None = None
+
+
+class CustomFieldOptionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    option_id: uuid.UUID
+    label: str
+    value: str
+    color: str | None = None
+    position: int
+    is_active: bool
+
+
 class CustomFieldDefinitionCreate(CustomFieldDefinitionBase):
     list_id: uuid.UUID | None = None
+    options: list[CustomFieldOptionCreate] | None = None
 
 
 class CustomFieldDefinitionUpdate(BaseModel):
@@ -467,6 +522,7 @@ class CustomFieldDefinitionRead(CustomFieldDefinitionBase):
     list_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    options: list[CustomFieldOptionRead] = Field(default_factory=list)
 
 
 class TaskCustomFieldValueUpsert(BaseModel):
@@ -547,6 +603,36 @@ class DocRead(DocBase):
     updated_by_id: uuid.UUID | None
 
 
+# ---------------------------------------------------------------------------
+# Demo Seed Schemas
+# ---------------------------------------------------------------------------
+
+
+class DemoSeedRequest(BaseModel):
+    spaces: int | None = None
+    lists: int | None = None
+    tasks: int | None = None
+    comments: int | None = None
+    docs: int | None = None
+    schedule: int | None = None
+
+
+class DemoSeedResponse(BaseModel):
+    tenant_id: uuid.UUID
+    spaces: int
+    lists: int
+    tasks: int
+    comments: int
+    docs: int
+    employees: int
+    operators: int
+    clients: int
+    schedule_entries: int
+    current_revision_id: uuid.UUID | None = None
+    current_revision_version: int | None = None
+    content: str | None = None
+
+
 class DocRevisionCreate(BaseModel):
     text: str | None = None
     payload_base64: str | None = None
@@ -569,6 +655,41 @@ class DocRevisionRead(BaseModel):
     metadata_json: dict
     created_by_id: uuid.UUID | None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Profile & Preferences Schemas
+# ---------------------------------------------------------------------------
+
+
+class ProfileRead(BaseModel):
+    user_id: uuid.UUID | None = None
+    email: str
+    given_name: str | None = None
+    family_name: str | None = None
+    full_name: str
+    roles: list[str] = Field(default_factory=list)
+    avatar_url: str | None = None
+
+
+class PreferencesState(BaseModel):
+    theme: Literal["dark", "light"] = "dark"
+    view_density: Literal["comfortable", "compact", "table"] = "comfortable"
+    favorites: list[str] = Field(default_factory=list)
+    last_view: str = "list"
+    right_panel_open: bool = False
+    ai_persona: Literal["balanced", "detailed", "concise"] = "balanced"
+    list_view_columns: dict[str, bool] = Field(default_factory=dict)
+
+
+class PreferencesUpdate(BaseModel):
+    theme: Literal["dark", "light"] | None = None
+    view_density: Literal["comfortable", "compact", "table"] | None = None
+    favorites: list[str] | None = None
+    last_view: str | None = None
+    right_panel_open: bool | None = None
+    ai_persona: Literal["balanced", "detailed", "concise"] | None = None
+    list_view_columns: dict[str, bool] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +758,7 @@ class CycleEfficiencyMetrics(BaseModel):
 class ThroughputBucket(BaseModel):
     week_start: date
     completed: int
+    created: int = 0
 
 
 class ThroughputHistogram(BaseModel):
@@ -911,6 +1033,8 @@ class DeptxExecutionRead(DeptxExecutionBase):
 
 
 class PreferenceModelBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     slug: str
     name: str
     base_type: str
@@ -953,7 +1077,7 @@ class PreferenceModelUpdate(BaseModel):
 
 
 class PreferenceModelRead(PreferenceModelBase):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     model_id: uuid.UUID
     tenant_id: uuid.UUID
@@ -962,6 +1086,8 @@ class PreferenceModelRead(PreferenceModelBase):
 
 
 class PreferenceVariantBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     key: str
     name: str
     rollout_rate: float = 0
@@ -1001,7 +1127,7 @@ class PreferenceVariantUpdate(BaseModel):
 
 
 class PreferenceVariantRead(PreferenceVariantBase):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     variant_id: uuid.UUID
     tenant_id: uuid.UUID
@@ -1011,6 +1137,8 @@ class PreferenceVariantRead(PreferenceVariantBase):
 
 
 class PreferenceRolloutBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     stage: str = "draft"
     target_rate: float = 0
     current_rate: float = 0
@@ -1076,7 +1204,7 @@ class PreferenceRolloutUpdate(BaseModel):
 
 
 class PreferenceRolloutRead(PreferenceRolloutBase):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     rollout_id: uuid.UUID
     tenant_id: uuid.UUID
@@ -1087,6 +1215,8 @@ class PreferenceRolloutRead(PreferenceRolloutBase):
 
 
 class PreferenceFeedbackBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: uuid.UUID
     variant_id: uuid.UUID | None = None
     task_id: uuid.UUID | None = None
@@ -1104,7 +1234,7 @@ class PreferenceFeedbackCreate(PreferenceFeedbackBase):
 
 
 class PreferenceFeedbackRead(PreferenceFeedbackBase):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     feedback_id: uuid.UUID
     tenant_id: uuid.UUID
@@ -1112,6 +1242,8 @@ class PreferenceFeedbackRead(PreferenceFeedbackBase):
 
 
 class PreferenceRolloutSummary(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     rollout_id: uuid.UUID
     variant_id: uuid.UUID | None = None
     variant_key: str | None = None
@@ -1128,6 +1260,8 @@ class PreferenceRolloutSummary(BaseModel):
 
 
 class PreferenceGuardrailSummary(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: uuid.UUID
     variant_id: uuid.UUID | None = None
     total_feedback: int
@@ -1514,6 +1648,60 @@ class ScrAlertAckRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Claims Schemas
+# ---------------------------------------------------------------------------
+
+
+class ClaimSummary(BaseModel):
+    claim_id: str
+    status: str
+    payer: str | None = None
+    patient: str | None = None
+    amount: int | None = None
+    updated_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class ClaimListResponse(BaseModel):
+    data: list[ClaimSummary]
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClaimEventRead(BaseModel):
+    timestamp: datetime
+    status: str | None = None
+    description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# HR Schemas
+# ---------------------------------------------------------------------------
+
+
+class HRTimeclockEntryRead(BaseModel):
+    id: str
+    user_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+
+
+class HRTimesheetRead(BaseModel):
+    id: str
+    user_id: str
+    period_start: date | None = None
+    period_end: date | None = None
+    status: str | None = None
+    total_hours: float | None = None
+
+
+class HRPayrollSummaryRead(BaseModel):
+    period_start: date | None = None
+    period_end: date | None = None
+    total_pay: int | None = None
+    pending: int | None = None
+
+
+# ---------------------------------------------------------------------------
 # Subscription & Feature Toggles
 # ---------------------------------------------------------------------------
 
@@ -1597,3 +1785,235 @@ class NotificationConfigPayload(BaseModel):
 
 class NotificationConfigResponse(NotificationConfigPayload):
     updated_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Dedicated Agent Schemas
+# ---------------------------------------------------------------------------
+
+
+class AssignmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    assignment_id: uuid.UUID
+    tenant_id: uuid.UUID
+    agent_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
+    agent_slug: str
+    agent_version: str | None = None
+    status: str
+    priority: str
+    service_owner: str | None = None
+    node_id: str | None = None
+    overlay: dict[str, Any] = Field(default_factory=dict)
+    capabilities: dict[str, Any] = Field(default_factory=dict, alias="capabilities_json")
+    model: dict[str, Any] = Field(default_factory=dict, alias="model_json")
+    prompt_profile: dict[str, Any] = Field(default_factory=dict, alias="prompt_profile_json")
+    policy: dict[str, Any] = Field(default_factory=dict, alias="policy_json")
+    prompt_history: list[dict[str, Any]] = Field(default_factory=list)
+    polaris_obligations: list[dict[str, Any]] = Field(default_factory=list)
+    feature_flags: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_json")
+    context: dict[str, Any] = Field(default_factory=dict)
+    expires_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssignmentEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: uuid.UUID
+    tenant_id: uuid.UUID
+    assignment_id: uuid.UUID
+    event_type: str
+    source: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime
+    created_at: datetime
+
+
+class NotificationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    notification_id: uuid.UUID
+    tenant_id: uuid.UUID
+    event_type: str
+    title: str
+    body: str
+    cta_path: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict, alias="payload")
+    status: str
+    acknowledged_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AiJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
+    prompt_id: str | None = None
+    status: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AiJobCreate(BaseModel):
+    prompt_id: str | None = None
+    status: str = "queued"
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] | None = None
+
+
+class NotificationCreate(BaseModel):
+    event_type: str
+    title: str
+    body: str
+    cta_path: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalyticsEventCreate(BaseModel):
+    event_type: str | None = None
+    name: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _ensure_event_type(self) -> "AnalyticsEventCreate":
+        event_type = self.event_type or self.name
+        if not event_type:
+            raise ValueError("event_type or name must be provided")
+        self.event_type = event_type
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Schedule Timeline / Bridge
+# ---------------------------------------------------------------------------
+
+
+class ScheduleTimelineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    timeline_id: uuid.UUID
+    session_id: uuid.UUID
+    patient_id: uuid.UUID | None = None
+    staff_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    service_type: str
+    authorization_id: uuid.UUID | None = None
+    cpt_code: str | None = None
+    modifiers: list[str] = Field(default_factory=list)
+    scheduled_start: datetime
+    scheduled_end: datetime
+    worked_start: datetime | None = None
+    worked_end: datetime | None = None
+    duration_minutes: int | None = None
+    status: str
+    payroll_entry_id: uuid.UUID | None = None
+    claim_id: uuid.UUID | None = None
+    transport_job_id: uuid.UUID | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleTimelineWorklogUpdate(BaseModel):
+    worked_start: datetime | None = None
+    worked_end: datetime | None = None
+    duration_minutes: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] | None = None
+
+
+class ScheduleTimelineLockRequest(BaseModel):
+    status: Literal["approved", "worked", "exported", "claimed", "paid", "scheduled"]
+    lock_metadata: dict[str, Any] | None = None
+
+
+class BillingPreviewResponse(BaseModel):
+    timeline_id: uuid.UUID
+    session_id: uuid.UUID
+    service_type: str
+    cpt_code: str | None = None
+    modifiers: list[str] = Field(default_factory=list)
+    units: float | None = None
+    rate: float | None = None
+    authorization_id: uuid.UUID | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BillingExportRequest(BaseModel):
+    timeline_id: uuid.UUID
+    transport_job_id: uuid.UUID
+    metadata: dict[str, Any] | None = None
+
+
+class ClaimStatusUpdate(BaseModel):
+    timeline_id: uuid.UUID
+    claim_id: uuid.UUID
+    status: Literal["submitted", "accepted", "rejected", "paid", "void"]
+    status_code: str | None = None
+    status_message: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class PayrollReconcileRequest(BaseModel):
+    payroll_entry_id: uuid.UUID
+    timeline_ids: list[uuid.UUID]
+    status: Literal["generated", "paid", "void"]
+    metadata: dict[str, Any] | None = None
+
+
+class ScheduleSyncConflict(BaseModel):
+    timeline_id: uuid.UUID
+    reason: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleSyncResponse(BaseModel):
+    created: int
+    updated: int
+    unchanged: int
+    sources: dict[str, int] = Field(default_factory=dict)
+    conflicts: list[ScheduleSyncConflict] = Field(default_factory=list)
+
+
+class DigestRequest(BaseModel):
+    team_id: uuid.UUID | None = None
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+
+
+class DigestResponse(BaseModel):
+    digest_id: str
+    summary_text: str
+    metadata: dict[str, Any]
+    period_start: datetime
+    period_end: datetime
+
+
+class AssistantSource(BaseModel):
+    resource_type: str
+    resource_id: str
+    snippet: str
+
+
+class AssistantQueryRequest(BaseModel):
+    question: str
+    context: dict[str, Any] | None = None
+    mode: Literal["summary", "detail"] = "summary"
+    session_id: uuid.UUID | None = None
+
+
+class AssistantResponse(BaseModel):
+    answer: str
+    sources: list[AssistantSource] = Field(default_factory=list)
+    session_id: str
+    message_id: str

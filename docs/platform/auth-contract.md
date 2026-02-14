@@ -1,4 +1,6 @@
-# Dydact Platform Authentication & Tenant Contract (Draft)
+# Dydact Platform Authentication & Tenant Contract (Mirror)
+
+Canonical copy: `platform/docs/platform/auth-contract.md`. Update the master first and mirror changes here when needed.
 
 ## Headers
 - `x-tenant-id`: canonical tenant identifier (slug or UUID). Required on every request.

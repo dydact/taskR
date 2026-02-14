@@ -183,6 +183,7 @@ Audience: Platform Engineering, Product, Front-End teams, scrAIv integration par
 - **SSE:** `/events/stream` — multiplexed channel for tasks, claims, AI, notifications, presence.  
 - **Outbox consumer (internal):** `POST /events/outbox/ack` — called by workers after processing outbox row (tenant-scoped).  
 - **Retry/backpressure:** determined by outbox consumer plan (see event-driven worker orchestration doc).
+- **Dedicated audits:** `POST /dedicated/events` ingests `AssignmentEventPayload` bodies from Flow’s `plans/dedicated_reservation_audit.json` runs (`/plans/dedicated_reservation_audit/compile|run`), including the new `event_type=assignment.audit`. Configure `FLOW_RESERVATION_AUDIT_INTERVAL_SECONDS` to drive the scheduler and `MEMPODS_URL` so memPODS dossier writes (`reservation::<assignment_id>`) succeed.
 
 ## 17. ToolFront & External AI
 - TaskR leverages ToolFront for prompt management but exposes internal routes above. ToolFront-specific endpoints are out-of-scope for this reference; see `docs/runbooks/toolfront-rollout.md` and scrAIv backend docs.

@@ -2,7 +2,7 @@ FROM python:3.11-slim AS base
 
 WORKDIR /workspace
 COPY services/api ./services/api
-COPY toolfront_registry_client ./toolfront_registry_client
+COPY shared-python ./shared-python
 COPY toolfront-registry ./toolfront-registry
 COPY packages ./packages
 WORKDIR /workspace/services/api

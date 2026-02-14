@@ -39,4 +39,22 @@ pip install --quiet "litellm[proxy]" uvicorn
 
 export LITELLM_OLLAMA_BASE="http://localhost:11434"
 echo "[local-llm] Starting LiteLLM OpenAI-compatible proxy on :${PORT} (backed by Ollama: ${MODEL_NAME})"
-exec litellm --model "ollama/${MODEL_NAME}" --host 0.0.0.0 --port ${PORT} --num_workers 1
+
+# LiteLLM auto-enables optional backends (Prisma DB, NATS, etc.) whenever it sees
+# related env vars in the current shell. taskR exports several of these for other
+# services, which causes the proxy to crash locally. Run LiteLLM with a sanitized
+# environment so it only sees what it actually needs here.
+PROXY_ENV=(
+  "PATH=$PATH"
+  "HOME=$HOME"
+  "LITELLM_OLLAMA_BASE=$LITELLM_OLLAMA_BASE"
+)
+if [[ -n "${LANG:-}" ]]; then
+  PROXY_ENV+=("LANG=$LANG")
+fi
+if [[ -n "${LC_ALL:-}" ]]; then
+  PROXY_ENV+=("LC_ALL=$LC_ALL")
+fi
+
+exec env -i "${PROXY_ENV[@]}" \
+  litellm --model "ollama/${MODEL_NAME}" --host 0.0.0.0 --port ${PORT} --num_workers 1

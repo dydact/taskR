@@ -12,6 +12,7 @@ from app.events.bus import event_bus
 from app.models.core import Document, DocumentRevision, Task
 from app.routes.utils import get_list, get_space, get_tenant
 from app.schemas import DocCreate, DocRead, DocRevisionCreate, DocRevisionRead, DocUpdate
+from app.services.memory import memory_service
 from common_auth import TenantHeaders, get_tenant_headers
 from doc_ingest import DOCSTRANGE_AVAILABLE, extract_text_async
 
@@ -32,8 +33,21 @@ async def _ensure_unique_slug(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Slug already in use")
 
 
-async def _serialize_doc(doc: Document) -> DocRead:
-    return DocRead.model_validate(doc)
+async def _serialize_doc(doc: Document, *, include_content: bool = False) -> DocRead:
+    latest: DocumentRevision | None = None
+    revisions = getattr(doc, "revisions", None)
+    if revisions:
+        latest = max(revisions, key=lambda rev: rev.version)
+    update: dict[str, object] = {}
+    if latest is not None:
+        update["current_revision_id"] = latest.revision_id
+        update["current_revision_version"] = latest.version
+        if include_content:
+            update["content"] = latest.content
+    elif include_content:
+        update["content"] = ""
+    base = DocRead.model_validate(doc)
+    return base.model_copy(update=update)
 
 
 async def _serialize_revision(revision: DocumentRevision) -> DocRevisionRead:
@@ -51,7 +65,11 @@ async def list_docs(
     page_size: int = Query(default=50, ge=1, le=200),
 ) -> list[DocRead]:
     tenant = await get_tenant(session, headers.tenant_id)
-    query = select(Document).where(Document.tenant_id == tenant.tenant_id)
+    query = (
+        select(Document)
+        .options(selectinload(Document.revisions))
+        .where(Document.tenant_id == tenant.tenant_id)
+    )
 
     if space_identifier is not None:
         space = await get_space(session, tenant.tenant_id, space_identifier)
@@ -133,8 +151,8 @@ async def create_doc(
     session.add(revision)
     await session.flush()
 
-    await session.refresh(doc)
-    serialized = await _serialize_doc(doc)
+    await session.refresh(doc, attribute_names=["revisions"])
+    serialized = await _serialize_doc(doc, include_content=True)
     await event_bus.publish(
         {
             "type": "doc.created",
@@ -142,6 +160,12 @@ async def create_doc(
             "doc_id": str(doc.doc_id),
             "payload": serialized.model_dump(),
         }
+    )
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "doc",
+        doc.doc_id,
+        session=session,
     )
     return serialized
 
@@ -153,10 +177,14 @@ async def get_doc(
     headers: TenantHeaders = Depends(get_tenant_headers),
 ) -> DocRead:
     tenant = await get_tenant(session, headers.tenant_id)
-    doc = await session.get(Document, doc_id)
+    doc = await session.get(
+        Document,
+        doc_id,
+        options=[selectinload(Document.revisions)],
+    )
     if doc is None or doc.tenant_id != tenant.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doc not found")
-    return await _serialize_doc(doc)
+    return await _serialize_doc(doc, include_content=True)
 
 
 @router.patch("/{doc_id}", response_model=DocRead)
@@ -187,8 +215,8 @@ async def update_doc(
         setattr(doc, field, value)
 
     await session.flush()
-    await session.refresh(doc)
-    serialized = await _serialize_doc(doc)
+    await session.refresh(doc, attribute_names=["revisions"])
+    serialized = await _serialize_doc(doc, include_content=True)
     await event_bus.publish(
         {
             "type": "doc.updated",
@@ -196,6 +224,12 @@ async def update_doc(
             "doc_id": str(doc.doc_id),
             "payload": serialized.model_dump(),
         }
+    )
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "doc",
+        doc.doc_id,
+        session=session,
     )
     return serialized
 
@@ -211,7 +245,11 @@ async def list_docs_for_task(
     if task is None or task.tenant_id != tenant.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
-    query = select(Document).where(Document.tenant_id == tenant.tenant_id)
+    query = (
+        select(Document)
+        .options(selectinload(Document.revisions))
+        .where(Document.tenant_id == tenant.tenant_id)
+    )
     if task.list_id is not None:
         query = query.where(Document.list_id == task.list_id)
     elif task.space_id is not None:
@@ -319,5 +357,11 @@ async def create_revision(
             "revision_id": str(revision.revision_id),
             "payload": result.model_dump(),
         }
+    )
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "doc",
+        doc.doc_id,
+        session=session,
     )
     return result

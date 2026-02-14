@@ -23,6 +23,7 @@ This document captures the initial relational schema for taskR through Milestone
 | `tr_task_dependency` | Directed edges between tasks (blocks, relates-to, etc.). |
 | `tr_automation_rule` | Stored rules for automation/agents. |
 | `tr_dashboard` | Persisted dashboard layouts per space (widget definitions + metadata). |
+| `tr_space_usage_snapshot` | Daily per-space usage metrics (active alpha users, task throughput, automation usage). |
 | `tr_preference_model` | Preference learner definitions tracking base model type, status, and metadata per tenant. |
 | `tr_preference_variant` | Model variants with rollout rates, metrics, and lifecycle state. |
 | `tr_preference_rollout` | Rollout controller snapshots including guardrail metrics and safety status. |

@@ -98,6 +98,32 @@ class ScrAivClient:
     async def list_users(self, tenant: TenantHeaders) -> Any:
         return await self._request("GET", "/api/users", tenant=tenant)
 
+    async def timeline_events(
+        self,
+        tenant: TenantHeaders,
+        *,
+        status: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        provider_user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if status:
+            params["status"] = status
+        if from_ts:
+            params["from"] = from_ts
+        if to_ts:
+            params["to"] = to_ts
+        if provider_user_id:
+            params["provider_user_id"] = provider_user_id
+        payload = await self._request(
+            "GET",
+            "/api/timeline/events",
+            tenant=tenant,
+            params=params or None,
+        )
+        return self._unwrap_list(payload)
+
     async def _request(
         self,
         method: str,
@@ -147,9 +173,21 @@ class ScrAivClient:
             headers["x-request-id"] = tenant.request_id
         if tenant.idempotency_key:
             headers["idempotency-key"] = tenant.idempotency_key
+        if tenant.scopes:
+            headers["x-scopes"] = " ".join(tenant.scopes)
+        if tenant.token_balance is not None:
+            headers["x-token-balance"] = str(tenant.token_balance)
         if self._api_key:
             headers["x-api-key"] = self._api_key
         return headers
+
+    @staticmethod
+    def _unwrap_list(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, dict) and "data" in payload and isinstance(payload["data"], list):
+            return payload["data"]  # type: ignore[return-value]
+        if isinstance(payload, list):
+            return payload  # type: ignore[return-value]
+        return []
 
     @staticmethod
     def _parse_error(response: httpx.Response) -> Any:
@@ -172,5 +210,5 @@ def get_scraiv_client() -> ScrAivClient:
     return ScrAivClient(
         base_url=base,
         api_key=settings.scraiv_api_key,
-        timeout=settings.insight_api_timeout_seconds,
+        timeout=settings.scraiv_timeout_seconds,
     )

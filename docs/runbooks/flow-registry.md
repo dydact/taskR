@@ -22,4 +22,4 @@ The flow registry provides lightweight orchestration metadata for TFrameX-compat
 - AutoPM suggestions can be resolved by PATCHing `status` to `resolved` with a `resolved_at` timestamp.
 
 ## Next Steps
-- Integrate flow run metrics with the observability pipeline (Prometheus) and extend node budgeting once TFrameX adapters ship from vNdydact.
+- Integrate flow run metrics with the observability pipeline (Prometheus) and extend node budgeting once TFrameX adapters ship from dydact.

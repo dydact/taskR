@@ -74,6 +74,9 @@ preference-guardrail:
 preference-monitor:
 	@./scripts/preference_guardrail_check.py --loop $(ARGS)
 
+seed-alpha:
+	@. .venv/bin/activate && python scripts/seed_alpha_workspace.py
+
 autopm-agent:
 	@./scripts/autopm_agent.py $(ARGS)
 

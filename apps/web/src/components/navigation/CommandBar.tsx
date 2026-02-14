@@ -1,5 +1,7 @@
 import React from "react";
-import type { ViewMode } from "../../types/shell";
+import type { ViewMode, AiPersona } from "../../types/shell";
+import { useAIFeatures } from "../../hooks/useAIFeatures";
+import { AIPersonaSelector } from "../ai/AIPersonaSelector";
 
 type CommandBarProps = {
   viewMode: ViewMode;
@@ -11,6 +13,8 @@ type CommandBarProps = {
   claimSearchTerm?: string;
   onClaimSearchTermChange?: (value: string) => void;
   claimSearchRef?: React.RefObject<HTMLInputElement>;
+  aiPersona?: AiPersona;
+  onAiPersonaChange?: (persona: AiPersona) => void;
 };
 
 const VIEW_LABELS: Record<ViewMode, string> = {
@@ -18,11 +22,17 @@ const VIEW_LABELS: Record<ViewMode, string> = {
   board: "Board",
   calendar: "Calendar",
   dashboard: "Dashboard",
+  gantt: "Gantt",
+  inbox: "Inbox",
+  goals: "Goals",
   claims: "Claims",
-  hr: "HR"
+  hr: "HR",
+  docs: "Docs",
+  dedicated: "Dedicated",
+  xoxo: "xOxO"
 };
 
-const ORDER: ViewMode[] = ["claims", "list", "board", "calendar", "dashboard", "hr"];
+const ORDER: ViewMode[] = ["dashboard", "list", "board", "calendar", "gantt", "inbox", "goals", "claims", "hr", "docs", "dedicated", "xoxo"];
 
 export const CommandBar: React.FC<CommandBarProps> = ({
   viewMode,
@@ -33,8 +43,11 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   onOpenTenantSettings,
   claimSearchTerm = "",
   onClaimSearchTermChange,
-  claimSearchRef
+  claimSearchRef,
+  aiPersona = "balanced",
+  onAiPersonaChange
 }) => {
+  const { showAIPersonaSelector } = useAIFeatures();
   return (
     <div className="command-bar-shell">
       <div className="command-bar-floating glass-surface">
@@ -49,7 +62,15 @@ export const CommandBar: React.FC<CommandBarProps> = ({
               onClick={() => onViewModeChange(mode)}
             >
               <span className="command-bar-view-icon" aria-hidden="true">
-                {mode === "claims" ? "⌁" : mode === "dashboard" ? "▦" : mode === "calendar" ? "◷" : "○"}
+                {mode === "xoxo"
+                  ? "✶"
+                  : mode === "claims"
+                    ? "⌁"
+                    : mode === "dashboard"
+                      ? "▦"
+                      : mode === "calendar"
+                        ? "◷"
+                        : "○"}
               </span>
               <span>{VIEW_LABELS[mode]}</span>
             </button>
@@ -72,6 +93,13 @@ export const CommandBar: React.FC<CommandBarProps> = ({
           </div>
         ) : (
           <div className="command-bar-actions">
+            {showAIPersonaSelector && onAiPersonaChange && (
+              <AIPersonaSelector
+                value={aiPersona}
+                onChange={onAiPersonaChange}
+                className="command-bar-persona"
+              />
+            )}
             <button
               type="button"
               className="command-bar-pill"

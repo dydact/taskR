@@ -23,6 +23,5 @@ export const env = {
   claimsApiBase: trimTrailingSlash((import.meta.env.VITE_CLAIMS_API_BASE ?? import.meta.env.VITE_TASKR_API) ?? ""),
   preferenceModelSlug: (import.meta.env.VITE_PREFERENCE_MODEL_SLUG ?? "assistant-router").toLowerCase(),
   taskPageSize: resolveNumber(import.meta.env.VITE_TASK_PAGE_SIZE, DEFAULT_CLAIMS_PAGE_SIZE),
-  chatIconUrl: (import.meta as any).env?.VITE_DYDACT_CHAT_ICON || "https://scr.local/brand/favicon.png"
+  chatIconUrl: (import.meta as any).env?.VITE_DYDACT_CHAT_ICON || "/brand/taskr-favicon.png"
 } as const;
-

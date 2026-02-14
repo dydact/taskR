@@ -13,17 +13,19 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import get_db_session
 from app.core.config import settings
 from app.events.bus import event_bus
-from app.models.core import CustomFieldDefinition, List, Task, TaskCustomField
+from app.models.core import ActivityEvent, CustomFieldDefinition, List, Task, TaskCustomField
 from app.routes.analytics import analytics_cache
 from app.routes.utils import get_folder, get_list, get_space, get_tenant
 from app.schemas import (
     TaskCreate,
+    ActivityEventRead,
     TaskCustomFieldValueRead,
     TaskCustomFieldValueUpsert,
     TaskRead,
     TaskUpdate,
 )
 from app.services.billing import require_feature
+from app.services.memory import memory_service
 from app.services.usage import adjust_usage
 from common_auth import TenantHeaders, get_tenant_headers
 
@@ -52,15 +54,19 @@ def _normalize_field_value(field: CustomFieldDefinition, value: Any) -> dict:
     elif field_type == "boolean":
         normalized = bool(value)
     elif field_type == "select":
-        options = config.get("options", [])
-        if value not in options:
+        option_values = [opt.value for opt in getattr(field, "options", []) if getattr(opt, "is_active", True)]
+        if not option_values:
+            option_values = config.get("options", [])
+        if value not in option_values:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Value not in select options")
         normalized = value
     elif field_type == "multi_select":
-        options = set(config.get("options", []))
+        option_values = {opt.value for opt in getattr(field, "options", []) if getattr(opt, "is_active", True)}
+        if not option_values:
+            option_values = set(config.get("options", []))
         if not isinstance(value, (list, tuple)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Value must be list for multi_select")
-        invalid = [item for item in value if item not in options]
+        invalid = [item for item in value if item not in option_values]
         if invalid:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid multi_select options")
         normalized = list(value)
@@ -154,6 +160,8 @@ async def _upsert_custom_fields(
         if definition.space_id and definition.space_id != task.space_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Field not applicable to this space")
 
+        await session.refresh(definition, attribute_names=["options"])
+
         normalized = _normalize_field_value(definition, payload.value)
         existing_value = existing.get(definition.field_id)
         if existing_value:
@@ -185,7 +193,11 @@ async def list_tasks(
     query = (
         select(Task)
         .where(Task.tenant_id == tenant.tenant_id)
-        .options(selectinload(Task.custom_fields).selectinload(TaskCustomField.field))
+        .options(
+            selectinload(Task.custom_fields)
+            .selectinload(TaskCustomField.field)
+            .selectinload(CustomFieldDefinition.options)
+        )
     )
 
     if status_filter:
@@ -241,6 +253,12 @@ async def create_task(
     await _emit_linkage_event(request, "created", serialized)
     await analytics_cache.invalidate_for_space(tenant.tenant_id, space_id)
     await adjust_usage(session, tenant.tenant_id, "tasks_total", 1)
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "task",
+        task.task_id,
+        session=session,
+    )
     return serialized
 
 
@@ -251,10 +269,40 @@ async def get_task(
     headers: TenantHeaders = Depends(get_tenant_headers),
 ) -> TaskRead:
     tenant = await get_tenant(session, headers.tenant_id)
-    task = await session.get(Task, task_id, options=[selectinload(Task.custom_fields).selectinload(TaskCustomField.field)])
+    task = await session.get(
+        Task,
+        task_id,
+        options=[
+            selectinload(Task.custom_fields)
+            .selectinload(TaskCustomField.field)
+            .selectinload(CustomFieldDefinition.options)
+        ],
+    )
     if task is None or task.tenant_id != tenant.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return _serialize_task(task)
+
+
+@router.get("/{task_id}/activity", response_model=list[ActivityEventRead])
+async def list_task_activity(
+    task_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[ActivityEventRead]:
+    tenant = await get_tenant(session, headers.tenant_id)
+    task = await session.get(Task, task_id)
+    if task is None or task.tenant_id != tenant.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    query = (
+        select(ActivityEvent)
+        .where(ActivityEvent.tenant_id == tenant.tenant_id, ActivityEvent.task_id == task_id)
+        .order_by(ActivityEvent.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(query)
+    events = result.scalars().all()
+    return [ActivityEventRead.model_validate(event) for event in events]
 
 
 @router.patch("/{task_id}", response_model=TaskRead)
@@ -266,7 +314,15 @@ async def update_task(
     headers: TenantHeaders = Depends(get_tenant_headers),
 ) -> TaskRead:
     tenant = await get_tenant(session, headers.tenant_id)
-    task = await session.get(Task, task_id, options=[selectinload(Task.custom_fields).selectinload(TaskCustomField.field)])
+    task = await session.get(
+        Task,
+        task_id,
+        options=[
+            selectinload(Task.custom_fields)
+            .selectinload(TaskCustomField.field)
+            .selectinload(CustomFieldDefinition.options)
+        ],
+    )
     if task is None or task.tenant_id != tenant.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
@@ -295,6 +351,12 @@ async def update_task(
     await _emit_linkage_event(request, "updated", serialized)
     if task.space_id:
         await analytics_cache.invalidate_for_space(tenant.tenant_id, task.space_id)
+    await memory_service.enqueue(
+        tenant.tenant_id,
+        "task",
+        task.task_id,
+        session=session,
+    )
     return serialized
 
 

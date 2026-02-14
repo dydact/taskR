@@ -1,4 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { useShell } from '../../context/ShellContext';
+import { AISettingsToggle } from '../ai/AISettingsToggle';
+import { AIPersonaSelector } from '../ai/AIPersonaSelector';
+import { useAIFeatures } from '../../hooks/useAIFeatures';
 
 export type ModelProfile = 'general' | 'reasoning';
 
@@ -30,9 +34,16 @@ type Props = { isOpen: boolean; onClose(): void };
 
 export const PreferencesPanel: React.FC<Props> = ({ isOpen, onClose }) => {
   const [prefs, setPrefs] = useState<Preferences>(loadPreferences());
+  const { preferences, updatePreferences, setAiPersona } = useShell();
+  const { enabled: aiEnabled, showAIPersonaSelector } = useAIFeatures();
+
   useEffect(() => { if (isOpen) setPrefs(loadPreferences()); }, [isOpen]);
 
   const apply = () => { savePreferences(prefs); onClose(); };
+
+  const handleAIToggle = (enabled: boolean) => {
+    updatePreferences({ aiEnhanced: enabled });
+  };
 
   if (!isOpen) return null;
   return (
@@ -52,6 +63,15 @@ export const PreferencesPanel: React.FC<Props> = ({ isOpen, onClose }) => {
             <label><input type="checkbox" checked={prefs.guardrails.noPII} onChange={(e) => setPrefs({ ...prefs, guardrails: { ...prefs.guardrails, noPII: e.target.checked } })} /> No PII</label>
             <label style={{ marginLeft: 16 }}><input type="checkbox" checked={prefs.guardrails.noExternalLinks} onChange={(e) => setPrefs({ ...prefs, guardrails: { ...prefs.guardrails, noExternalLinks: e.target.checked } })} /> No external links</label>
           </div>
+        </div>
+        <div className="field ai-settings-section">
+          <AISettingsToggle enabled={preferences.aiEnhanced} onChange={handleAIToggle} />
+          {showAIPersonaSelector && (
+            <div className="ai-persona-field">
+              <label>AI Persona</label>
+              <AIPersonaSelector value={preferences.aiPersona} onChange={setAiPersona} />
+            </div>
+          )}
         </div>
         <div className="actions">
           <button type="button" onClick={onClose}>Cancel</button>

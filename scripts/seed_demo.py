@@ -3,7 +3,7 @@
 Seed the taskR development stack with sample data so the React workspace has something to render.
 
 Usage:
-    python scripts/seed_demo.py [--api http://localhost:8000] [--tenant demo]
+    python scripts/seed_demo.py [--api http://localhost:8010] [--tenant demo]
                                 [--db postgresql://taskr:taskr@localhost:5432/taskr]
 """
 from __future__ import annotations
@@ -27,6 +27,19 @@ try:
 except ImportError:
     print("The `requests` package is required. Install it with `pip install requests`.", file=sys.stderr)
     sys.exit(1)
+
+SPACE_DEFINITIONS = [
+    {"slug": "automation-lab", "name": "Automation Lab", "color": "#6366F1"},
+    {"slug": "client-success", "name": "Client Success", "color": "#22C55E"},
+    {"slug": "compliance-watch", "name": "Compliance Watch", "color": "#F97316"},
+    {"slug": "finance-billing", "name": "Finance & Billing", "color": "#0EA5E9"},
+    {"slug": "growth-experiment", "name": "Growth Experiment", "color": "#A855F7"},
+    {"slug": "hr-staffing", "name": "HR & Staffing", "color": "#E11D48"},
+    {"slug": "marketing-launch", "name": "Marketing Launch", "color": "#14B8A6"},
+    {"slug": "onboarding-ops", "name": "Onboarding Ops", "color": "#F59E0B"},
+    {"slug": "product-discovery", "name": "Product Discovery", "color": "#3B82F6"},
+    {"slug": "support-queue", "name": "Support Queue", "color": "#9333EA"},
+]
 
 
 APPROX_NOW = datetime.now(timezone.utc)
@@ -157,13 +170,16 @@ class Seeder:
 
     # -------------------- Space & Lists --------------------
     def ensure_space(self, slug: str, name: str) -> dict:
-        spaces = self._request("get", "/spaces", params={"page_size": 100})
+        spaces = self._request("get", "/spaces", params={"page_size": 200})
         for space in spaces:
-            if space["slug"] == slug:
+            if space["slug"] == slug or space["name"] == name:
                 log(f"Using existing space '{slug}'")
                 return space
 
         payload = {"slug": slug, "name": name}
+        definition = next((item for item in SPACE_DEFINITIONS if item["slug"] == slug), None)
+        if definition and definition.get("color"):
+            payload["color"] = definition["color"]
         space = self._request("post", "/spaces", json=payload)
         log(f"Created space '{slug}'")
         return space
@@ -427,6 +443,9 @@ class Seeder:
         if not self.tenant_id:
             raise RuntimeError("Failed to resolve tenant ID")
 
+        self.dedupe_spaces()
+        self.apply_space_definitions()
+
         user_map = self.upsert_users()
         space = self.ensure_space("workspace", "Workspace Hub")
         lists_to_seed = ["Sprint Backlog", "Ready for Review"]
@@ -443,13 +462,137 @@ class Seeder:
         task_lookup = self._fetch_existing_tasks(space["slug"])
         self.seed_worklogs(task_lookup.keys(), task_lookup, user_map)
         self.seed_preferences("assistant-router", task_lookup, user_map)
+        self.seed_notifications()
+        self.seed_ai_jobs()
 
         log("Seeding complete. Refresh the frontend to see the demo workspace.")
+
+    def dedupe_spaces(self) -> None:
+        assert self.tenant_id is not None
+        with self.db_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT space_id, slug, name, created_at
+                FROM tr_space
+                WHERE tenant_id = %s
+                ORDER BY created_at ASC
+                """,
+                (self.tenant_id,),
+            )
+            rows = cur.fetchall()
+
+        canonical_by_slug = {item["slug"]: item for item in SPACE_DEFINITIONS}
+        canonical_by_name = {item["name"]: item for item in SPACE_DEFINITIONS}
+        seen_slugs: set[str] = set()
+
+        for space_id, slug, name, _created_at in rows:
+            target = canonical_by_slug.get(slug) or canonical_by_name.get(name)
+            canonical_slug = target["slug"] if target else slug
+            normalized_key = (canonical_slug or "").strip().lower() or (name or "").strip().lower()
+
+            if normalized_key and normalized_key in seen_slugs:
+                with self.db_conn.cursor() as cur:
+                    cur.execute("DELETE FROM tr_space WHERE space_id = %s", (space_id,))
+                    log(f"Removed duplicate space '{name}' ({slug})")
+                continue
+
+            if normalized_key:
+                seen_slugs.add(normalized_key)
+            if slug != canonical_slug:
+                with self.db_conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE tr_space SET slug = %s, updated_at = NOW() WHERE space_id = %s",
+                        (canonical_slug, space_id),
+                    )
+                    log(f"Renamed space slug {slug} → {canonical_slug}")
+
+            if target and name != target["name"]:
+                with self.db_conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE tr_space SET name = %s, updated_at = NOW() WHERE space_id = %s",
+                        (target["name"], space_id),
+                    )
+
+    def apply_space_definitions(self) -> None:
+        assert self.tenant_id is not None
+        for definition in SPACE_DEFINITIONS:
+            space = self.ensure_space(definition["slug"], definition["name"])
+            if definition.get("color") and space.get("color") != definition["color"]:
+                self._request(
+                    "patch",
+                    f"/spaces/{space['slug']}",
+                    json={"color": definition["color"]},
+                )
+
+    def seed_notifications(self) -> None:
+        assert self.tenant_id is not None
+        events = [
+            {
+                "event_type": "task.completed",
+                "title": "Sprint review updated",
+                "body": "Cecilia marked Sprint Review as complete.",
+                "cta_path": "/tasks",
+                "payload": {"task_id": "demo-sprint-review"},
+            },
+            {
+                "event_type": "insight.weekly_digest",
+                "title": "Weekly digest ready",
+                "body": "Your weekly automation digest is ready for review.",
+                "cta_path": "/insights",
+                "payload": {},
+            },
+        ]
+        with self.db_conn.cursor() as cur:
+            for event in events:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM tr_notification
+                    WHERE tenant_id = %s AND event_type = %s AND title = %s
+                    LIMIT 1
+                    """,
+                    (self.tenant_id, event["event_type"], event["title"]),
+                )
+                if cur.fetchone():
+                    log(f"Skipping notification '{event['title']}' (already present)")
+                    continue
+                self._request("post", "/notifications", json=event, ok_statuses=(200, 201))
+
+    def seed_ai_jobs(self) -> None:
+        assert self.tenant_id is not None
+        jobs = [
+            {
+                "prompt_id": "demo-summary",
+                "status": "succeeded",
+                "metadata_json": {"summary": "Authored project summary for Q2 initiative."},
+                "result_json": {"document_id": "demo-summary-1"},
+            },
+            {
+                "prompt_id": "demo-rewrite",
+                "status": "queued",
+                "metadata_json": {"summary": "Rewrite onboarding FAQ"},
+            },
+        ]
+        with self.db_conn.cursor() as cur:
+            for job in jobs:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM tr_ai_job
+                    WHERE tenant_id = %s AND coalesce(prompt_id, '') = coalesce(%s, '')
+                    LIMIT 1
+                    """,
+                    (self.tenant_id, job.get("prompt_id")),
+                )
+                if cur.fetchone():
+                    log(f"Skipping AI job seed for prompt '{job.get('prompt_id')}' (already present)")
+                    continue
+                self._request("post", "/ai/jobs", json=job, ok_statuses=(200, 201))
 
 
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(description="Seed the taskR dev stack with demo data.")
-    parser.add_argument("--api", default=os.environ.get("TASKR_API", "http://localhost:8000"), help="taskR API base URL")
+    parser.add_argument("--api", default=os.environ.get("TASKR_API", "http://localhost:8010"), help="taskR API base URL")
     parser.add_argument("--tenant", default=os.environ.get("TASKR_TENANT", "demo"), help="Tenant slug to seed")
     parser.add_argument(
         "--db",

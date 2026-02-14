@@ -17,5 +17,5 @@
 - Document findings in SICA sessions to build longitudinal improvement dossiers.
 
 ## Next Steps
-- Integrate connector-level circuit breakers once Google/Outlook sync ships from `platform/vNdydact`.
+- Integrate connector-level circuit breakers once Google/Outlook sync ships from `platform/dydact`.
 - Add Prometheus exporters for flow run latency and guardrail status to feed Grafana dashboards.

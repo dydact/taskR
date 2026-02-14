@@ -1,9 +1,32 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { Task, TaskComment, CustomFieldValue, Subtask } from "../../types/task";
+import type { ActivityEvent, Task, TaskComment, CustomFieldValue, Subtask, TeamMember } from "../../types/task";
 import type { HierarchyStatus } from "../../types/hierarchy";
 import type { Doc } from "../../types/doc";
 import type { MeetingNote } from "../../types/meeting";
 import { MeetingNoteCard } from "../meeting/MeetingNoteCard";
+import { useAIFeatures } from "../../hooks/useAIFeatures";
+import { MemPODSContextPanel } from "../ai/MemPODSContextPanel";
+
+const shortId = (id: string) => id.slice(0, 8);
+
+const AVATAR_COLORS = ["#6c7bff", "#4ad0a7", "#f7b23b", "#ff6b6b", "#38bdf8", "#ec4899"];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
 
 type TaskUpdate = {
   title?: string;
@@ -11,6 +34,7 @@ type TaskUpdate = {
   status?: string;
   priority?: string;
   due_at?: string | null;
+  assignee_id?: string | null;
 };
 
 type TaskDrawerProps = {
@@ -21,7 +45,9 @@ type TaskDrawerProps = {
   onUpdate(taskId: string, updates: TaskUpdate): Promise<void> | void;
   comments: TaskComment[];
   commentsLoading: boolean;
-  onAddComment(taskId: string, body: string): Promise<void>;
+  activityEvents: ActivityEvent[];
+  activityLoading: boolean;
+  onAddComment(taskId: string, body: string, mentions?: string[]): Promise<void>;
   customFields: CustomFieldValue[];
   customFieldsLoading: boolean;
   onCustomFieldChange(fieldId: string, value: unknown): Promise<void>;
@@ -37,9 +63,57 @@ type TaskDrawerProps = {
   meetingNotesError: string | null;
   onRefreshMeetingNotes?: () => void;
   onRegenerateMeetingNote?: (noteId: string) => Promise<void> | void;
+  teamMembers?: TeamMember[];
+  teamMembersLoading?: boolean;
 };
 
 const PRIORITY_OPTIONS = ["low", "medium", "high", "urgent"] as const;
+
+const mentionRegex = /@([a-zA-Z0-9._-]+)/g;
+
+const isMentionBoundary = (text: string, index: number) => {
+  if (index === 0) return true;
+  return !/[a-zA-Z0-9_]/.test(text[index - 1]);
+};
+
+const extractMentions = (text: string) => {
+  const mentions = new Set<string>();
+  mentionRegex.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = mentionRegex.exec(text)) !== null) {
+    const start = match.index ?? 0;
+    if (!isMentionBoundary(text, start)) {
+      continue;
+    }
+    mentions.add(match[1]);
+  }
+  return Array.from(mentions);
+};
+
+const splitMentions = (text: string) => {
+  const parts: Array<{ type: "text" | "mention"; value: string }> = [];
+  mentionRegex.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let cursor = 0;
+
+  while ((match = mentionRegex.exec(text)) !== null) {
+    const start = match.index ?? 0;
+    if (!isMentionBoundary(text, start)) {
+      continue;
+    }
+    if (start > cursor) {
+      parts.push({ type: "text", value: text.slice(cursor, start) });
+    }
+    parts.push({ type: "mention", value: match[0] });
+    cursor = start + match[0].length;
+  }
+
+  if (cursor < text.length) {
+    parts.push({ type: "text", value: text.slice(cursor) });
+  }
+
+  return parts;
+};
 
 export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   open,
@@ -49,6 +123,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   onUpdate,
   comments,
   commentsLoading,
+  activityEvents,
+  activityLoading,
   onAddComment,
   customFields,
   customFieldsLoading,
@@ -64,7 +140,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   meetingNotesLoading,
   meetingNotesError,
   onRefreshMeetingNotes,
-  onRegenerateMeetingNote
+  onRegenerateMeetingNote,
+  teamMembers = [],
+  teamMembersLoading = false
 }) => {
   const [activeTab, setActiveTab] = useState<"overview" | "activity" | "subtasks" | "docs">("overview");
   const [title, setTitle] = useState("");
@@ -75,6 +153,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [isCreatingSubtask, setIsCreatingSubtask] = useState(false);
+  const detectedMentions = useMemo(() => extractMentions(commentDraft), [commentDraft]);
+  const { showMemPODSContext } = useAIFeatures();
 
   useEffect(() => {
     if (task) {
@@ -95,14 +175,44 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
     [statuses, task?.status]
   );
 
-  const formatDueDate = (value: unknown) => {
-    if (!value) return "";
-    const date = new Date(String(value));
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
+const formatDueDate = (value: unknown) => {
+  if (!value) return "";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleDateString();
+};
+
+const getMentionList = (payload: Record<string, unknown> | null | undefined) => {
+  const mentions = payload?.mentions;
+  if (!Array.isArray(mentions)) return [];
+  return mentions.filter((item): item is string => typeof item === "string" && item.length > 0);
+};
+
+const formatActivityTitle = (event: ActivityEvent) => {
+  if (event.event_type === "comment.mention") {
+    const mentions = getMentionList(event.payload);
+    if (mentions.length === 0) {
+      return "Mention in comment";
     }
-    return date.toLocaleDateString();
-  };
+    const label = mentions
+      .slice(0, 3)
+      .map((mention) => (mention.startsWith("@") ? mention : `@${mention}`))
+      .join(", ");
+    const suffix = mentions.length > 3 ? ` +${mentions.length - 3} more` : "";
+    return `Mentioned ${label}${suffix}`;
+  }
+  return event.event_type.replace(/[_\.]/g, " ");
+};
+
+const formatActivityBody = (event: ActivityEvent) => {
+  if (event.event_type === "comment.mention") {
+    const snippet = typeof event.payload?.snippet === "string" ? event.payload.snippet : "";
+    return snippet;
+  }
+  return "";
+};
 
   if (!open || !task) {
     return null;
@@ -119,7 +229,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
     if (!commentDraft.trim()) return;
     setSubmittingComment(true);
     try {
-      await onAddComment(task.task_id, commentDraft.trim());
+      await onAddComment(task.task_id, commentDraft.trim(), detectedMentions);
       setCommentDraft("");
     } finally {
       setSubmittingComment(false);
@@ -288,7 +398,52 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                   <span>Status Category</span>
                   <p>{selectedStatus?.category ?? "—"}</p>
                 </div>
+                <label className="task-meta-field">
+                  <span>Assignee</span>
+                  {teamMembersLoading ? (
+                    <p>Loading...</p>
+                  ) : (
+                    <div className="task-assignee-selector">
+                      <select
+                        value={task.assignee_id ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value || null;
+                          handleUpdate({ assignee_id: value });
+                        }}
+                      >
+                        <option value="">Unassigned</option>
+                        {teamMembers.map((member) => (
+                          <option key={member.user_id} value={member.user_id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+                      {task.assignee && (
+                        <div className="task-assignee-preview">
+                          {task.assignee.avatar_url ? (
+                            <img
+                              className="task-assignee-avatar"
+                              src={task.assignee.avatar_url}
+                              alt={task.assignee.name}
+                            />
+                          ) : (
+                            <span
+                              className="task-assignee-avatar task-assignee-avatar--initials"
+                              style={{ backgroundColor: getAvatarColor(task.assignee.name) }}
+                            >
+                              {getInitials(task.assignee.name)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </label>
               </div>
+
+              {showMemPODSContext && task && (
+                <MemPODSContextPanel taskId={task.task_id} className="task-mempods" />
+              )}
 
               <label className="task-description-field">
                 <span>Description</span>
@@ -486,6 +641,31 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
 
           {activeTab === "activity" && (
             <div className="task-activity">
+              <section className="task-activity-feed">
+                <h3>Activity Feed</h3>
+                {activityLoading ? (
+                  <p className="task-activity-empty">Loading activity…</p>
+                ) : activityEvents.length === 0 ? (
+                  <p className="task-activity-empty">No recent activity yet.</p>
+                ) : (
+                  <ul className="task-activity-list">
+                    {activityEvents.map((event) => (
+                      <li key={event.event_id} className="task-activity-item">
+                        <div className="task-activity-item-header">
+                          <span className="task-activity-title">{formatActivityTitle(event)}</span>
+                          <span className="task-activity-meta">
+                            {event.actor_id ? shortId(event.actor_id) : "System"} •{" "}
+                            {new Date(event.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        {formatActivityBody(event) && (
+                          <p className="task-activity-body">{formatActivityBody(event)}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
               {commentsLoading ? (
                 <p className="task-activity-empty">Loading comments…</p>
               ) : comments.length === 0 ? (
@@ -500,7 +680,17 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                           {new Date(comment.created_at).toLocaleString()}
                         </time>
                       </div>
-                      <p className="task-comment-body">{comment.body}</p>
+                      <p className="task-comment-body">
+                        {splitMentions(comment.body || "").map((segment, index) =>
+                          segment.type === "mention" ? (
+                            <span key={`${comment.comment_id}-mention-${index}`} className="task-comment-mention">
+                              {segment.value}
+                            </span>
+                          ) : (
+                            <span key={`${comment.comment_id}-text-${index}`}>{segment.value}</span>
+                          )
+                        )}
+                      </p>
                     </li>
                   ))}
                 </ul>
@@ -513,6 +703,11 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                   rows={3}
                   onChange={(event) => setCommentDraft(event.target.value)}
                 />
+                {detectedMentions.length > 0 && (
+                  <p className="task-comment-mentions">
+                    Mentions: {detectedMentions.map((mention) => `@${mention}`).join(", ")}
+                  </p>
+                )}
                 <div className="task-comment-actions">
                   <button
                     type="button"

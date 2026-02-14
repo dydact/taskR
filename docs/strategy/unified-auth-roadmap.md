@@ -19,25 +19,25 @@ scrAIv, memPODS, and future services while enabling tokenized compute usage.
   `/enroll`, `/jobs/lease`, `/workflows/*`, `/compass/reviews`, `/plans/{id}`
   flows) matching the documented service matrix, so auth integration can assume
   those contracts when wiring device-bound credentials and namespace controls
-  (`vNdydact/services/exo/main.py:1592`, `vNdydact/services/exo/main.py:1597`,
-  `vNdydact/services/exo/main.py:1602`, `vNdydact/services/exo/main.py:1630`,
-  `vNdydact/services/exo/main.py:1812`, `vNdydact/services/deptx/main.py:192`,
-  `vNdydact/services/deptx/main.py:197`, `vNdydact/services/deptx/main.py:233`,
-  `vNdydact/services/deptx/main.py:303`, `vNdydact/services/flow/main.py:184`,
-  `vNdydact/services/flow/main.py:189`, `vNdydact/services/flow/main.py:258`,
-  `vNdydact/services/flow/main.py:386`, `vNdydact/docs/runbooks/service_endpoints.md:20`,
-  `vNdydact/docs/runbooks/service_endpoints.md:21`,
-  `vNdydact/docs/runbooks/service_endpoints.md:22`,
-  `vNdydact/docs/runbooks/service_endpoints.md:23`,
-  `vNdydact/docs/runbooks/service_endpoints.md:24`,
-  `vNdydact/docs/runbooks/service_endpoints.md:25`,
-  `vNdydact/docs/runbooks/service_endpoints.md:26`,
-  `vNdydact/docs/runbooks/service_endpoints.md:27`,
-  `vNdydact/docs/runbooks/service_endpoints.md:28`,
-  `vNdydact/docs/runbooks/service_endpoints.md:29`,
-  `vNdydact/docs/runbooks/service_endpoints.md:30`,
-  `vNdydact/docs/runbooks/service_endpoints.md:31`,
-  `vNdydact/docs/runbooks/service_endpoints.md:32`).
+  (`dydact/services/exo/main.py:1592`, `dydact/services/exo/main.py:1597`,
+  `dydact/services/exo/main.py:1602`, `dydact/services/exo/main.py:1630`,
+  `dydact/services/exo/main.py:1812`, `dydact/services/deptx/main.py:192`,
+  `dydact/services/deptx/main.py:197`, `dydact/services/deptx/main.py:233`,
+  `dydact/services/deptx/main.py:303`, `dydact/services/flow/main.py:184`,
+  `dydact/services/flow/main.py:189`, `dydact/services/flow/main.py:258`,
+  `dydact/services/flow/main.py:386`, `dydact/docs/runbooks/service_endpoints.md:20`,
+  `dydact/docs/runbooks/service_endpoints.md:21`,
+  `dydact/docs/runbooks/service_endpoints.md:22`,
+  `dydact/docs/runbooks/service_endpoints.md:23`,
+  `dydact/docs/runbooks/service_endpoints.md:24`,
+  `dydact/docs/runbooks/service_endpoints.md:25`,
+  `dydact/docs/runbooks/service_endpoints.md:26`,
+  `dydact/docs/runbooks/service_endpoints.md:27`,
+  `dydact/docs/runbooks/service_endpoints.md:28`,
+  `dydact/docs/runbooks/service_endpoints.md:29`,
+  `dydact/docs/runbooks/service_endpoints.md:30`,
+  `dydact/docs/runbooks/service_endpoints.md:31`,
+  `dydact/docs/runbooks/service_endpoints.md:32`).
 
 ## 2. Objectives
 
@@ -100,6 +100,78 @@ scrAIv, memPODS, and future services while enabling tokenized compute usage.
 5. Billing/compute microservice debits balance post request, logs usage, and
    emits audit events.
 
+## 3.1 Keycloak Rollout Blueprint
+
+The platform will adopt **Keycloak** as the unified identity provider to deliver
+short-term wins (email/password, social login, org RBAC) while establishing a
+path to hardware-bound `.dydact` access in the future.
+
+### Why Keycloak
+- Self-hosted, single binary + Postgres → no third-party SaaS dependency.
+- Realms & client scopes align with tenant/organization isolation needs.
+- Native WebAuthn and device attestation allow future crypto-token binding.
+- Event hooks and token mappers let us embed `tid`, `roles`, `permissions`,
+  `org`, and upcoming compute balance claims directly in issued JWTs.
+
+### Realm Structure
+| Realm | Purpose | Notes |
+| --- | --- | --- |
+| `dydact-platform` | Primary customer-facing orgs | One realm per deployment stage (dev/stage/prod). |
+| `dydact-internal` | Staff / ops accounts | Separate admin policies, read-only access to tenant data. |
+| `dydact-sandbox` | Automated testing | Mirrors prod realm config with synthetic data; tied to CI. |
+
+## 4. Agent Identity & Lifecycle
+
+### Registry Service
+- Stand up `agent-registry` (FastAPI + Postgres) inside the shared services cluster.
+- Canonical schema:
+  - `agent_id` (uuid), `tenant_id`, `type` (`system`, `user`, `employee`, `ephemeral`), `status` (`active`, `suspended`, `retired`).
+  - Ownership metadata (`created_by`, `created_at`, `deactivated_at`, `source`).
+  - Resource bindings (`workspace_mempod_id`, `shared_mempod_id`, `insight_profile`, `flow_plan_defaults`).
+  - Capability flags (`can_launch_flow`, `can_access_master_mempod`, `requires_human_review`).
+- Expose CRUD + lifecycle transitions at `/agents` with tenant-scoped RBAC; POST requires `x-tenant-id` + caller scopes.
+- Publish `agent.created`, `agent.updated`, `agent.deactivated` events to Harbor/Flow for downstream sync.
+
+### Lifecycle States
+- **Active** – Agent eligible for orchestration and ToolFront exposure; memPOD workspace mounted read/write.
+- **Suspended** – Credentials valid but orchestration disabled; memPOD workspace ro mounted for audit, Flow refuses new plans.
+- **Retired** – Credentials revoked; memPOD workspace archived, agent visible in history only.
+- **Ephemeral** – Auto-created for one-off tasks; registry retains pointer for 24 h, memPOD workspace flagged for pruning.
+- **Employee-class** – Subset of Active with `employment_profile` (role, manager, working hours) for TaskR roster. Attached to both dedicated workspace memPOD + shared master memPOD. Eligible for UI surfaces where humans appear (TaskR inbox, scrAIv HCM).
+
+### Integration Hooks
+- TaskR: pull `/agents?type=employee` for roster panes; store `agent_id` on tasks, comments, automation logs.
+- scrAIb: hydrate research views with agent metadata (`display_name`, `capabilities`) and mark workflow steps run by agents.
+- Flow/DeptX: require registry confirmation before honoring `reserve_agent` or `assign_agent` calls; emit completion events with `agent_id`.
+- memPODS: update dossier ownership and access control lists based on registry bindings; dedicate workspace collections per agent.
+- Insight/ToolFront: include `x-agent-id` header when requests originate from agents; policy engine uses registry scopes for allow/deny.
+
+### Operational Runbook
+- Keep registry + memPODS migrations in lock-step (agent workspace creation/deletion).
+- Document emergency procedures (suspend/retire) in `vNdydact/docs/runbooks/service_endpoints.md` follow-up PR.
+- Add smoke tests:
+  1. Create employee agent → ensure TaskR roster + scrAIb timeline reflect the record.
+  2. Suspend agent → Flow rejects new automation, memPOD workspace becomes read-only.
+  3. Retire agent → SSE broadcasts status change, TaskR hides from default filters.
+
+Within each customer realm:
+- **Clients:** `taskr-api`, `taskr-web`, `scr-api`, `scr-web`, `vndydact-services/*`, `portal`, `toolfront`.
+- **Roles:** Global roles (`tenant_admin`, `manager`, `member`, `viewer`), plus scoped composite roles mapping to application permissions (e.g., `taskr.tasks.manage`, `scr.claims.approve`).
+- **Groups:** `tenant-{slug}` groups carry default role assignments; onboarding automation creates group + role bindings per tenant.
+
+### Token Mapping
+- `tid` claim → tenant slug stored on group attribute.
+- `org` claim → global org UUID (aligns with DAT once live).
+- `roles` claim → Keycloak role list (prefixed per app, e.g., `taskr:tasks.manage`).
+- `permissions` claim → aggregated scope list generated via protocol mapper.
+- `x-user-id` header → uses `sub` (UUID) and optionally custom `user_id` attribute for legacy mapping.
+
+### Operational Footprint
+- Deploy Keycloak via Helm chart (HA mode: 3 pods, Postgres with streaming
+  replicas).  
+- Configure GitOps-managed realm export for reproducible environments.  
+- Integrate with existing secrets management (Vault) for admin creds, SMTP, OAuth config.
+
 ## 4. Integration Steps
 
 1. **Inventory & Alignment**
@@ -143,13 +215,45 @@ scrAIv, memPODS, and future services while enabling tokenized compute usage.
    - Provide integration guide for agents and third-party services.
 
 9. **Dedicated Agent Alignment**
-   - Finalize shared assignment schema updates in `vNdydact/packages/common_agents` so
-     Exo/DeptX/Flow can issue reservations with the new namespace-aware auth
-     payloads (`docs/reports/exo_dedicated_agent_gaps.md:1`,
-     `docs/plans/exo_dedicated_agents_and_xoxo_panel.md:1`,
-     `docs/plans/exo_dedicated_agents_and_xoxo_panel.md:82`).
-   - Wire Exo events and DeptX persistence hooks to honor DAT balances and
-     hardware-bound identities once TaskR UI signals its payload contract.
+    - Finalize shared assignment schema updates in `dydact/packages/common_agents` so
+      Exo/DeptX/Flow can issue reservations with the new namespace-aware auth
+      payloads (`docs/reports/exo_dedicated_agent_gaps.md:1`,
+      `docs/plans/exo_dedicated_agents_and_xoxo_panel.md:1`,
+      `docs/plans/exo_dedicated_agents_and_xoxo_panel.md:82`).
+    - Wire Exo events and DeptX persistence hooks to honor DAT balances and
+      hardware-bound identities once TaskR UI signals its payload contract.
+
+## 5. Testing & Platform Operability
+
+1. **Shadow Mode (Phase 1)**  
+   - Keep existing header-only auth paths active.  
+   - Configure gateway to request tokens from Keycloak but continue accepting
+     legacy headers; services log JWT validation results without enforcing.
+
+2. **Dual Validation (Phase 2)**  
+   - FastAPI middleware updates verify both legacy headers and Keycloak JWTs.  
+   - scrAIv `PlatformTokenVerifier` trusts Keycloak realm JWKS while local
+     accounts remain for fallback.  
+   - Periodic integration tests (`make smoke`, TaskR API e2e) exercise both
+     token types; failures trigger alerts before enforcement.
+
+3. **Enforcement Cutover (Phase 3)**  
+   - Toggle `REQUIRE_JWT=true` per service, starting with staging.  
+   - Regression test suites + manual UI smoke in staging must pass before prod
+     rollout; monitoring dashboards watch for 401/403 spikes.
+
+4. **Legacy Shutdown (Phase 4)**  
+   - Remove header-only bypass once services operate on JWT exclusively.  
+   - Archive scrAIv local login; retain read-only access for audit purposes.
+
+Throughout all phases:
+- Maintain nightly end-to-end runs on the sandbox realm to ensure new Keycloak
+  changes don’t regress platform flows.  
+- Keep seeded tenants/users synchronized between Keycloak and app DBs so QA
+  scenarios remain deterministic.  
+- Provide feature flags to disable Keycloak enforcement in emergencies without
+  redeploying services.
+- Use `scripts/verify_exo.sh` (runs `python3 -m compileall vNdydact/services/exo` and `pytest tests/test_dedicated.py`) in dev-server boot scripts or file watchers so dedicated-agent assignments stay healthy while token plumbing lands.
 
 ## 5. Dependencies & Risks
 
@@ -182,6 +286,10 @@ scrAIv, memPODS, and future services while enabling tokenized compute usage.
    updates so agents can reuse DAT-bound reservations when the UI is ready
    (`docs/reports/exo_dedicated_agent_gaps.md:1`,
    `docs/plans/exo_dedicated_agents_and_xoxo_panel.md:82`).
+6. For scrAIv UI/AuthProvider, align with the public auth plane contracts—review
+   `/sessions`, `/wallets`, and `/namespace` flows in
+   `docs/strategy/public-auth-service.md` so session JWTs and DAT receipts stay
+   consistent with the platform pathway.
 
 ## 7. References
 

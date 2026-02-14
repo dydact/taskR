@@ -9,7 +9,6 @@ import pytest
 TEST_FILE = Path(__file__).resolve()
 REPO_ROOT = TEST_FILE.parents[3]
 sys.path.insert(0, str(REPO_ROOT / "services/api/src"))
-sys.path.insert(0, str((REPO_ROOT / "..").resolve() / "toolfront_registry_client"))
 
 from app.core.config import settings
 from toolfront_registry_client import Registry, ToolFrontClient

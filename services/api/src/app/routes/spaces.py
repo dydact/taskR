@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Sequence
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +30,81 @@ from common_auth import TenantHeaders, get_tenant_headers
 router = APIRouter(prefix="/spaces", tags=["spaces"])
 
 
+async def _build_navigation_payload(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    spaces: Sequence[Space],
+) -> list[NavigationSpace]:
+    if not spaces:
+        return []
+
+    space_ids = [space.space_id for space in spaces]
+
+    folders_result = await session.execute(
+        select(Folder)
+        .where(Folder.tenant_id == tenant_id, Folder.space_id.in_(space_ids))
+        .order_by(Folder.space_id, Folder.position, Folder.name)
+    )
+    folders = folders_result.scalars().all()
+
+    lists_result = await session.execute(
+        select(List)
+        .where(List.tenant_id == tenant_id, List.space_id.in_(space_ids))
+        .order_by(List.space_id, List.folder_id, List.position, List.name)
+    )
+    lists = lists_result.scalars().all()
+
+    navigation_spaces: dict[uuid.UUID, NavigationSpace] = {}
+
+    for space in spaces:
+        metadata = space.metadata_json if isinstance(space.metadata_json, dict) else {}
+        category = metadata.get("category")
+        category_value = category if isinstance(category, str) and category.strip() else None
+        navigation_spaces[space.space_id] = NavigationSpace(
+            space_id=space.space_id,
+            slug=space.slug,
+            name=space.name,
+            color=space.color,
+            metadata_json=metadata,
+            category=category_value,
+            folders=[],
+            root_lists=[],
+        )
+
+    folder_map: dict[uuid.UUID, NavigationFolder] = {}
+
+    for folder in folders:
+        nav_space = navigation_spaces.get(folder.space_id)
+        if nav_space is None:
+            continue
+        nav_folder = NavigationFolder(
+            folder_id=folder.folder_id,
+            name=folder.name,
+            space_id=folder.space_id,
+            lists=[],
+        )
+        nav_space.folders.append(nav_folder)
+        folder_map[folder.folder_id] = nav_folder
+
+    for lst in lists:
+        nav_space = navigation_spaces.get(lst.space_id)
+        if nav_space is None:
+            continue
+        nav_list = NavigationList(
+            list_id=lst.list_id,
+            name=lst.name,
+            folder_id=lst.folder_id,
+            color=lst.color,
+            space_id=lst.space_id,
+        )
+        if lst.folder_id and lst.folder_id in folder_map:
+            folder_map[lst.folder_id].lists.append(nav_list)
+        else:
+            nav_space.root_lists.append(nav_list)
+
+    return [navigation_spaces[space.space_id] for space in spaces]
+
+
 @router.get("", response_model=list[SpaceRead])
 async def list_spaces(
     session: AsyncSession = Depends(get_db_session),
@@ -44,7 +121,46 @@ async def list_spaces(
         .limit(page_size)
     )
     result = await session.execute(query)
-    return result.scalars().all()
+    rows = result.scalars().all()
+
+    deduped: list[Space] = []
+    seen: set[tuple[uuid.UUID, str]] = set()
+    for space in rows:
+        normalized = (space.slug or "").strip().lower() or (space.name or "").strip().lower() or str(space.space_id)
+        key = (space.tenant_id, normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(space)
+
+    return deduped
+
+
+@router.get("/navigation", response_model=list[NavigationSpace])
+async def list_space_navigation(
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> list[NavigationSpace]:
+    tenant = await get_tenant(session, headers.tenant_id)
+
+    spaces_result = await session.execute(
+        select(Space)
+        .where(Space.tenant_id == tenant.tenant_id)
+        .order_by(Space.position, Space.name)
+    )
+    rows = spaces_result.scalars().all()
+
+    deduped: list[Space] = []
+    seen: set[tuple[uuid.UUID, str]] = set()
+    for space in rows:
+        normalized = (space.slug or "").strip().lower() or (space.name or "").strip().lower() or str(space.space_id)
+        key = (space.tenant_id, normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(space)
+
+    return await _build_navigation_payload(session, tenant.tenant_id, deduped)
 
 
 @router.post("", response_model=SpaceRead, status_code=status.HTTP_201_CREATED)
@@ -170,74 +286,15 @@ async def get_space_hierarchy(
     )
 
 
-@router.get("/navigation", response_model=list[NavigationSpace])
-async def list_space_navigation(
+@router.get("/{space_identifier}/navigation", response_model=NavigationSpace)
+async def get_space_navigation(
+    space_identifier: str,
     session: AsyncSession = Depends(get_db_session),
     headers: TenantHeaders = Depends(get_tenant_headers),
-) -> list[NavigationSpace]:
+) -> NavigationSpace:
     tenant = await get_tenant(session, headers.tenant_id)
-
-    spaces_result = await session.execute(
-        select(Space)
-        .where(Space.tenant_id == tenant.tenant_id)
-        .order_by(Space.position, Space.name)
-    )
-    spaces = spaces_result.scalars().all()
-    if not spaces:
-        return []
-
-    space_ids = [space.space_id for space in spaces]
-
-    folders_result = await session.execute(
-        select(Folder)
-        .where(Folder.tenant_id == tenant.tenant_id, Folder.space_id.in_(space_ids))
-        .order_by(Folder.space_id, Folder.position, Folder.name)
-    )
-    folders = folders_result.scalars().all()
-
-    lists_result = await session.execute(
-        select(List)
-        .where(List.tenant_id == tenant.tenant_id, List.space_id.in_(space_ids))
-        .order_by(List.space_id, List.folder_id, List.position, List.name)
-    )
-    lists = lists_result.scalars().all()
-
-    lists_by_folder: dict[tuple[uuid.UUID, uuid.UUID | None], list[NavigationList]] = {}
-    for lst in lists:
-        nav_list = NavigationList(
-            list_id=lst.list_id,
-            name=lst.name,
-            folder_id=lst.folder_id,
-            color=lst.color,
-            space_id=lst.space_id,
-        )
-        lists_by_folder.setdefault((lst.space_id, lst.folder_id), []).append(nav_list)
-
-    folders_by_space: dict[uuid.UUID, list[NavigationFolder]] = {}
-    for folder in folders:
-        folder_lists = lists_by_folder.get((folder.space_id, folder.folder_id), [])
-        folders_by_space.setdefault(folder.space_id, []).append(
-            NavigationFolder(
-                folder_id=folder.folder_id,
-                name=folder.name,
-                space_id=folder.space_id,
-                lists=folder_lists,
-            )
-        )
-
-    navigation: list[NavigationSpace] = []
-    for space in spaces:
-        nav_folders = folders_by_space.get(space.space_id, [])
-        root_lists = lists_by_folder.get((space.space_id, None), [])
-        navigation.append(
-            NavigationSpace(
-                space_id=space.space_id,
-                slug=space.slug,
-                name=space.name,
-                color=space.color,
-                folders=nav_folders,
-                root_lists=root_lists,
-            )
-        )
-
-    return navigation
+    space = await get_space(session, tenant.tenant_id, space_identifier)
+    navigation = await _build_navigation_payload(session, tenant.tenant_id, [space])
+    if not navigation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Navigation not found")
+    return navigation[0]

@@ -27,6 +27,6 @@
 - **Dydact AI:** memPODS/Insight ingest calendar snapshots nightly so AI assistants can suggest staffing adjustments and highlight compliance/billing anomalies.
 
 ## TODO
-- Wire to Google/Outlook connectors from `platform/vNdydact` once secrets/identity mapping complete.
+- Wire to Google/Outlook connectors from `platform/dydact` once secrets/identity mapping complete.
 - Add ICS export feed and webhook notifications for cross-product subscribers.
 - Automate reconciliation dashboards comparing taskR vs scrAIv/openemr booking totals.

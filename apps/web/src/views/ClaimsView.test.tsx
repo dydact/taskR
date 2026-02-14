@@ -127,12 +127,12 @@ describe("ClaimsView", () => {
     listEventsMock.mockResolvedValue({ data: [sampleEvent] });
     listJobEventsMock.mockResolvedValue({ data: [sampleJobEvent] });
 
-    render(<ClaimsView apiBase="http://localhost:8000" tenantId="tenant-1" userId="user-1" />);
+    render(<ClaimsView apiBase="http://localhost:8010" tenantId="tenant-1" userId="user-1" />);
 
     await waitFor(() => expect(listClaimsMock).toHaveBeenCalled());
     expect(createClaimsClientMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        baseUrl: "http://localhost:8000",
+        baseUrl: "http://localhost:8010",
         tenantId: "tenant-1",
         defaultHeaders: { "x-user-id": "user-1" },
       })
@@ -147,7 +147,7 @@ describe("ClaimsView", () => {
   it("surfaces an error when claim list fails", async () => {
     listClaimsMock.mockRejectedValueOnce(new Error("Failed to reach claims API"));
 
-    render(<ClaimsView apiBase="http://localhost:8000" tenantId="tenant-1" userId="user-1" />);
+    render(<ClaimsView apiBase="http://localhost:8010" tenantId="tenant-1" userId="user-1" />);
 
     expect(await screen.findByText("Failed to reach claims API")).toBeInTheDocument();
     expect(getClaimMock).not.toHaveBeenCalled();

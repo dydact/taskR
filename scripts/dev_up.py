@@ -8,7 +8,8 @@ This script orchestrates the common dev stack components:
 - Runs the front-end Vite dev server.
 
 Usage:
-  python scripts/dev_up.py [--skip-install] [--skip-migrate] [--skip-llm] [--llm-model MODEL]
+  python scripts/dev_up.py [--skip-install] [--skip-migrate] [--skip-llm] [--skip-vite]
+                           [--api-port PORT] [--llm-model MODEL]
 
 The script spawns the API and Vite dev server as subprocesses and pipes their
 logs with prefixes. Stop the script (Ctrl+C) to terminate child processes.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -34,6 +36,7 @@ PYTHONPATH = ":".join(
         str(REPO_ROOT / "packages/doc_ingest/src"),
         str(REPO_ROOT / "packages/common_billing/src"),
         str(REPO_ROOT / "packages/deptx_core/src"),
+        str(REPO_ROOT / "packages/common_agents/src"),
     ]
 )
 
@@ -41,6 +44,45 @@ PYTHONPATH = ":".join(
 def run(cmd: list[str], **kwargs) -> None:
     print(f"[dev-up] Running: {' '.join(cmd)}")
     subprocess.check_call(cmd, **kwargs)
+
+
+def resolve_compose_cmd() -> list[str] | None:
+    if shutil.which("docker"):
+        try:
+            result = subprocess.run(
+                ["docker", "compose", "version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return ["docker", "compose"]
+        except Exception:
+            pass
+    if shutil.which("docker-compose"):
+        return ["docker-compose"]
+    return None
+
+
+def resolve_host_bridge() -> str | None:
+    script = REPO_ROOT / "scripts" / "host_bridge.sh"
+    if not script.exists():
+        return None
+    result = subprocess.run([str(script)], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def resolve_port(env_name: str, default: int) -> int:
+    value = os.environ.get(env_name)
+    if value:
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return default
 
 
 def ensure_venv(skip_install: bool) -> Path:
@@ -54,7 +96,7 @@ def ensure_venv(skip_install: bool) -> Path:
     return VENV_PYTHON
 
 
-def install_requirements(python: Path) -> None:
+def install_requirements(python: Path, skip_vite: bool) -> None:
     env = os.environ.copy()
     env.setdefault("PIP_BREAK_SYSTEM_PACKAGES", "1")
     print("[dev-up] Installing backend requirements")
@@ -64,41 +106,74 @@ def install_requirements(python: Path) -> None:
         if req.exists():
             print(f"[dev-up] Installing {package} requirements")
             run([str(python), "-m", "pip", "install", "-r", str(req)], cwd=REPO_ROOT, env=env)
+    if skip_vite:
+        print("[dev-up] Skipping frontend dependencies (skip-vite enabled)")
+        return
+    if not shutil.which("pnpm"):
+        print("[dev-up] pnpm not found; skipping frontend dependency install.")
+        return
     print("[dev-up] Installing frontend dependencies")
     run(["pnpm", "install"], cwd=REPO_ROOT / "apps/web")
 
 
-def ensure_services(skip_containers: bool) -> None:
+def ensure_services(skip_containers: bool, compose_cmd: list[str] | None) -> None:
     if skip_containers:
         return
-    print('[dev-up] Starting supporting containers')
-    run(['docker', 'compose', 'up', '-d'], cwd=REPO_ROOT)
+    if not compose_cmd:
+        print("[dev-up] Docker Compose not found; skipping containers.")
+        return
+    env = os.environ.copy()
+    if "HOST_BRIDGE" not in env:
+        host_bridge = resolve_host_bridge()
+        if host_bridge:
+            env["HOST_BRIDGE"] = host_bridge
+    print("[dev-up] Starting supporting containers")
+    run([*compose_cmd, "up", "-d"], cwd=REPO_ROOT, env=env)
 
 
-def wait_for_postgres(timeout_seconds: int = 45) -> None:
+def wait_for_postgres(compose_cmd: list[str] | None, port: int, timeout_seconds: int = 45) -> None:
     """Wait until the postgres container is ready to accept connections.
 
-    Uses pg_isready inside the container for reliability.
+    Uses pg_isready inside the container for reliability AND checks host port accessibility.
     """
     start = time.time()
+    
+    # 1. Check internal readiness
+    if compose_cmd:
+        while True:
+            try:
+                # Quiet check with 1s timeout
+                result = subprocess.run(
+                    [*compose_cmd, "exec", "-T", "postgres", "pg_isready", "-U", "taskr", "-d", "taskr", "-h", "localhost", "-t", "1", "-q"],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    break
+            except FileNotFoundError:
+                pass
+            
+            if time.time() - start > timeout_seconds:
+                print('[dev-up] Warning: Postgres internal check timeout; continuing anyway')
+                break
+            time.sleep(1)
+
+    # 2. Check external host connectivity
+    # This prevents "Connection refused" if docker-proxy is slow to bind
+    import socket
+    print(f'[dev-up] Waiting for Postgres on port {port}...')
     while True:
         try:
-            # Quiet check with 1s timeout
-            result = subprocess.run(
-                ['docker', 'compose', 'exec', '-T', 'postgres', 'pg_isready', '-U', 'taskr', '-d', 'taskr', '-h', 'localhost', '-t', '1', '-q'],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode == 0:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
                 print('[dev-up] Postgres is ready')
                 return
-        except FileNotFoundError:
-            # Docker/compose not available, best effort fallback: wait briefly
+        except (OSError, ConnectionRefusedError):
             pass
+            
         if time.time() - start > timeout_seconds:
-            print('[dev-up] Warning: Postgres not ready after wait; continuing anyway')
+            print('[dev-up] Warning: Postgres host port unavailable; continuing anyway')
             return
         time.sleep(1)
 
@@ -148,15 +223,81 @@ def port_in_use(port: int) -> bool:
         return False
 
 
-def start_api(python: Path, skip_api: bool) -> subprocess.Popen | None:
+def ensure_postgres_host_port(default: int = 5433) -> int:
+    env_name = "TASKR_POSTGRES_HOST_PORT"
+    value = os.environ.get(env_name)
+    if value:
+        try:
+            port = int(value)
+        except ValueError:
+            print(f"[dev-up] Invalid {env_name}='{value}'; using {default}.")
+            return default
+        if port_in_use(port):
+            print(f"[dev-up] {env_name}={port} is already in use; docker compose may fail.")
+        return port
+
+    if not port_in_use(default):
+        return default
+
+    for candidate in range(default + 1, default + 20):
+        if not port_in_use(candidate):
+            os.environ[env_name] = str(candidate)
+            print(f"[dev-up] Postgres port {default} busy; using {candidate} (set {env_name}).")
+            return candidate
+
+    print(
+        f"[dev-up] Postgres ports {default}-{default + 19} busy; set {env_name} manually.",
+    )
+    return default
+
+
+def ensure_nats_monitor_port(default: int = 8222) -> int:
+    env_name = "TASKR_NATS_MONITOR_HOST_PORT"
+    value = os.environ.get(env_name)
+    if value:
+        try:
+            port = int(value)
+        except ValueError:
+            print(f"[dev-up] Invalid {env_name}='{value}'; using {default}.")
+            return default
+        if port_in_use(port):
+            print(f"[dev-up] {env_name}={port} is already in use; docker compose may fail.")
+        return port
+
+    if not port_in_use(default):
+        return default
+
+    for candidate in range(default + 1, default + 20):
+        if not port_in_use(candidate):
+            os.environ[env_name] = str(candidate)
+            print(f"[dev-up] NATS Monitor port {default} busy; using {candidate} (set {env_name}).")
+            return candidate
+
+    print(
+        f"[dev-up] NATS Monitor ports {default}-{default + 19} busy; set {env_name} manually.",
+    )
+    return default
+
+
+def start_api(
+    python: Path,
+    skip_api: bool,
+    api_port: int,
+    postgres_port: int,
+    redis_port: int,
+    nats_port: int,
+) -> subprocess.Popen | None:
     if skip_api:
         print('[dev-up] Skipping API start (requested)')
         return None
-    if port_in_use(8000):
-        print('[dev-up] Detected API already running on :8000 — skipping local uvicorn.')
+    if port_in_use(api_port):
+        print(f"[dev-up] Detected API already running on :{api_port} — skipping local uvicorn.")
         return None
     env = os.environ.copy()
     env['PYTHONPATH'] = PYTHONPATH
+    env.setdefault("TR_DATABASE_URL", f"postgresql://taskr:taskr@localhost:{postgres_port}/taskr")
+    env.setdefault("TR_REDIS_URL", f"redis://localhost:{redis_port}/0")
+    env.setdefault("TR_NATS_URL", f"nats://localhost:{nats_port}")
     env.setdefault('VITE_TASKR_USER_ID', 'demo-user')
     # Ensure API can see local OpenAI-compatible proxy
     env.setdefault('TR_LOCAL_OPENAI_BASE_URL', 'http://127.0.0.1:8001')
@@ -168,14 +309,21 @@ def start_api(python: Path, skip_api: bool) -> subprocess.Popen | None:
         'uvicorn',
         'app.main:app',
         '--reload',
+        '--host',
+        '0.0.0.0',
+        '--port',
+        str(api_port),
     ]
     print('[dev-up] Starting API server')
     return subprocess.Popen(cmd, cwd=REPO_ROOT / 'services/api', env=env)
 
 
-def start_vite() -> subprocess.Popen:
+def start_vite(api_port: int) -> subprocess.Popen | None:
+    if not shutil.which("pnpm"):
+        print("[dev-up] pnpm not found; skipping Vite dev server.")
+        return None
     env = os.environ.copy()
-    env.setdefault("VITE_TASKR_API", "http://127.0.0.1:8000")
+    env.setdefault("VITE_TASKR_API", f"http://127.0.0.1:{api_port}")
     env.setdefault("VITE_TASKR_USER_ID", "demo-user")
     env.setdefault("VITE_TENANT_ID", "demo")
     # Default to HTTP dev unless explicitly requested
@@ -195,25 +343,39 @@ def main() -> None:
     parser.add_argument("--skip-containers", action="store_true")
     parser.add_argument("--skip-api", action="store_true")
     parser.add_argument("--skip-llm", action="store_true")
+    parser.add_argument("--skip-vite", action="store_true")
+    parser.add_argument("--api-port", type=int, default=8010)
     parser.add_argument("--llm-model", default=None, help="Override local model (e.g., qwen2.5:32b-instruct)")
     args = parser.parse_args()
 
+    compose_cmd = resolve_compose_cmd()
+    postgres_port = ensure_postgres_host_port()
+    ensure_nats_monitor_port()
     python_path = ensure_venv(args.skip_install)
     if not args.skip_install:
-        install_requirements(python_path)
+        install_requirements(python_path, args.skip_vite)
 
-    ensure_services(args.skip_containers)
+    ensure_services(args.skip_containers, compose_cmd)
 
     if not args.skip_migrate:
-        wait_for_postgres()
+        wait_for_postgres(compose_cmd, postgres_port)
         apply_migrations()
 
     # Start local LLM proxy first so API can use it immediately
     llm_proc = start_local_llm(args.llm_model, args.skip_llm)
 
-    api_proc = start_api(python_path, args.skip_api)
+    redis_port = resolve_port("TASKR_REDIS_HOST_PORT", 6379)
+    nats_port = resolve_port("TASKR_NATS_HOST_PORT", 14222)
+    api_proc = start_api(
+        python_path,
+        args.skip_api,
+        args.api_port,
+        postgres_port,
+        redis_port,
+        nats_port,
+    )
     time.sleep(1)
-    vite_proc = start_vite()
+    vite_proc = None if args.skip_vite else start_vite(args.api_port)
 
     procs = [proc for proc in [llm_proc, api_proc, vite_proc] if proc is not None]
 

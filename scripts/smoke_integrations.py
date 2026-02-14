@@ -10,7 +10,7 @@ import urllib.request
 import urllib.error
 
 
-BASE = os.getenv("TASKR_BASE_URL", "http://localhost:8000").rstrip("/")
+BASE = os.getenv("TASKR_BASE_URL", "http://localhost:8010").rstrip("/")
 TENANT = os.getenv("TENANT_ID", "demo")
 USER = os.getenv("TASKR_USER_ID", os.getenv("VITE_TASKR_USER_ID", "smoke-user"))
 

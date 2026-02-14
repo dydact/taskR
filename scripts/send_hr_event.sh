@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-BASE_URL="${TASKR_BASE_URL:-http://localhost:8000}"
+BASE_URL="${TASKR_BASE_URL:-http://localhost:8010}"
 TOKEN="${TR_SCR_ALERT_TOKEN:-${WEBHOOK_TOKEN:-dev-secret}}"
 TENANT="${TENANT_ID:-demo}"
 EVENT_TYPE="${1:-hr.clock.updated}"

@@ -1,6 +1,6 @@
 # ToolFront Registry Manifest
 
-This directory is generated from the vNdydact ToolFront gateway and acts as the
+This directory is generated from the dydact ToolFront gateway and acts as the
 canonical manifest consumed by other projects (taskR, scrAIv, etc.).
 
 ## Contents
@@ -10,7 +10,7 @@ canonical manifest consumed by other projects (taskR, scrAIv, etc.).
 
 ## Regenerating
 
-From `platform/vNdydact` run:
+From `platform/dydact` run:
 
 ```bash
 make export-toolfront-registry

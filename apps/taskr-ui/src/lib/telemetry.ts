@@ -12,13 +12,14 @@ export const useTelemetry = () => {
   const track = useCallback(
     async ({ name, properties }: TelemetryPayload) => {
       try {
+        const occurredAt = new Date().toISOString();
         await client.request({
           path: "/analytics/events",
           method: "POST",
           body: {
-            event: name,
-            properties,
-            emitted_at: new Date().toISOString()
+            event_type: name,
+            payload: properties ?? {},
+            occurred_at: occurredAt
           }
         });
       } catch (err) {
@@ -31,4 +32,3 @@ export const useTelemetry = () => {
 
   return { track };
 };
-

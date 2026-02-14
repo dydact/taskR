@@ -30,6 +30,8 @@ export type ShellSpace = {
   name: string;
   color?: string | null;
   favorite?: boolean;
+  metadata?: Record<string, unknown>;
+  category?: string | null;
 };
 
 type PreferenceUpdateOptions = {
@@ -75,10 +77,24 @@ const DEFAULT_PREFERENCES: ShellPreferences = {
   lastView: "list",
   rightPanelOpen: true,
   aiPersona: "balanced",
-  listViewColumns: {}
+  listViewColumns: {},
+  aiEnhanced: false
 };
 
-const VIEW_MODES: ViewMode[] = ["list", "board", "calendar", "gantt", "dashboard", "claims", "hr"];
+const VIEW_MODES: ViewMode[] = [
+  "list",
+  "board",
+  "calendar",
+  "gantt",
+  "dashboard",
+  "inbox",
+  "goals",
+  "claims",
+  "hr",
+  "docs",
+  "dedicated",
+  "xoxo"
+];
 const THEMES: ThemeMode[] = ["dark", "light"];
 const DENSITIES: DensityMode[] = ["comfortable", "compact", "table"];
 const PERSONAS: AiPersona[] = ["balanced", "detailed", "concise"];
@@ -117,7 +133,11 @@ const normalizePreferences = (input?: ApiPreferences | null): ShellPreferences =
         ? input.right_panel_open
         : DEFAULT_PREFERENCES.rightPanelOpen,
     aiPersona: isPersona(input?.ai_persona) ? input.ai_persona : DEFAULT_PREFERENCES.aiPersona,
-    listViewColumns: listColumns
+    listViewColumns: listColumns,
+    aiEnhanced:
+      typeof input?.ai_enhanced === "boolean"
+        ? input.ai_enhanced
+        : DEFAULT_PREFERENCES.aiEnhanced
   };
 };
 
@@ -130,6 +150,7 @@ const toApiPatch = (patch: Partial<ShellPreferences>): Partial<ApiPreferences> =
   if (patch.rightPanelOpen !== undefined) payload.right_panel_open = patch.rightPanelOpen;
   if (patch.aiPersona !== undefined) payload.ai_persona = patch.aiPersona;
   if (patch.listViewColumns !== undefined) payload.list_view_columns = patch.listViewColumns;
+  if (patch.aiEnhanced !== undefined) payload.ai_enhanced = patch.aiEnhanced;
   return payload;
 };
 
@@ -154,17 +175,33 @@ const sanitizePreferencePatch = (patch: Partial<ShellPreferences>): Partial<Shel
     });
     result.listViewColumns = next;
   }
+  if (patch.aiEnhanced !== undefined) {
+    result.aiEnhanced = Boolean(patch.aiEnhanced);
+  }
   return result;
 };
 
-const mapSpace = (space: SpaceSummary): ShellSpace => ({
-  id: space.id,
-  spaceId: space.id,
-  slug: space.slug,
-  name: space.name,
-  color: space.color ?? null,
-  favorite: typeof space.favorite === "boolean" ? space.favorite : undefined
-});
+const mapSpace = (space: SpaceSummary): ShellSpace => {
+  const metadataRaw = (space as SpaceSummary & { metadata_json?: unknown }).metadata_json;
+  const metadata =
+    metadataRaw && typeof metadataRaw === "object" && !Array.isArray(metadataRaw)
+      ? (metadataRaw as Record<string, unknown>)
+      : undefined;
+  const rawCategory =
+    metadata && typeof metadata.category === "string" ? (metadata.category as string).trim() : null;
+  const category = rawCategory && rawCategory.length > 0 ? rawCategory : null;
+
+  return {
+    id: space.id,
+    spaceId: space.id,
+    slug: space.slug,
+    name: space.name,
+    color: space.color ?? null,
+    favorite: typeof space.favorite === "boolean" ? space.favorite : undefined,
+    metadata,
+    category
+  };
+};
 
 const toStringOrEmpty = (value: unknown): string => {
   if (typeof value === "string") return value;
@@ -198,6 +235,16 @@ const normalizeNavigation = (input: unknown, space?: ShellSpace | null): Navigat
   const name =
     typeof record.name === "string" && record.name.trim().length > 0 ? record.name : space?.name ?? slug ?? "Untitled space";
   const color = typeof record.color === "string" ? record.color : space?.color ?? null;
+  const metadataFromRecord =
+    record.metadata_json && typeof record.metadata_json === "object" && !Array.isArray(record.metadata_json)
+      ? (record.metadata_json as Record<string, unknown>)
+      : undefined;
+  const metadata: Record<string, unknown> = metadataFromRecord ?? space?.metadata ?? {};
+  const metadataCategory =
+    metadata && typeof metadata["category"] === "string" ? (metadata["category"] as string).trim() : null;
+  const rawCategory =
+    typeof record.category === "string" ? record.category.trim() : metadataCategory ?? space?.category ?? null;
+  const categoryValue = rawCategory && rawCategory.length > 0 ? rawCategory : null;
   const listNormalizer = normalizeNavigationList(spaceId);
 
   const rootLists = Array.isArray(record.root_lists)
@@ -236,6 +283,9 @@ const normalizeNavigation = (input: unknown, space?: ShellSpace | null): Navigat
     slug,
     name,
     color,
+    metadata_json: metadata,
+    metadata,
+    category: categoryValue ?? null,
     root_lists: rootLists,
     folders
   };
@@ -499,8 +549,21 @@ export const ShellProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         payload = response as SpaceSummary[];
       }
       const mapped = payload.map(mapSpace);
+      const seen = new Set<string>();
+      const deduped: ShellSpace[] = [];
+      for (const space of mapped) {
+        const key =
+          (space.slug && space.slug.trim().toLowerCase()) ||
+          (space.name && space.name.trim().toLowerCase()) ||
+          space.spaceId;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        deduped.push(space);
+      }
       if (!unmountedRef.current) {
-        setSpacesRaw(mapped);
+        setSpacesRaw(deduped);
       }
     } catch (err: unknown) {
       console.error("Failed to load spaces", err);
@@ -614,6 +677,7 @@ export const ShellProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [activeSpaceId, refreshNavigation]);
 
   useEffect(() => {
+    unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
       if (debounceRef.current) {
@@ -697,6 +761,23 @@ export const ShellProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       updatePreferences
     ]
   );
+
+  if (import.meta.env.DEV) {
+    (window as any).__taskrShell = {
+      ready,
+      preferencesLoading,
+      preferencesError,
+      spacesLoading,
+      spacesError,
+      navigationLoading,
+      navigationError,
+      profileLoading,
+      profileError,
+      preferences,
+      spaces,
+      navigation
+    };
+  }
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;
 };

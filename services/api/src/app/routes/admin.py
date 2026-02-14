@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import get_db_session
 from app.events.bus import event_bus
 from common_billing import BillingService
@@ -27,6 +28,8 @@ from app.models.core import (
 )
 from app.routes.utils import get_tenant
 from app.schemas import (
+    DemoSeedRequest,
+    DemoSeedResponse,
     FeatureOverrideRead,
     FeatureOverrideUpdate,
     GuardrailDrillRequest,
@@ -37,6 +40,7 @@ from app.schemas import (
     SubscriptionUpdate,
 )
 from app.services.billing import get_billing_service, require_feature
+from app.services.demo_seed import DemoSeedOptions, populate_demo
 from app.services.insight import summarize_guardrail
 from app.services.usage import get_usage
 from common_auth import TenantHeaders, get_tenant_headers
@@ -296,6 +300,39 @@ async def delete_subscription_override(
         tenant.tenant_id,
         feature_code,
         application=application,
+    )
+
+
+@router.post("/demo/populate", response_model=DemoSeedResponse, status_code=status.HTTP_202_ACCEPTED)
+async def populate_demo_endpoint(
+    payload: DemoSeedRequest,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+):
+    if settings.environment not in {"local", "dev", "development"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="endpoint_disabled")
+
+    tenant = await get_tenant(session, headers.tenant_id)
+    options = DemoSeedOptions(
+        spaces=payload.spaces or 3,
+        lists_per_space=payload.lists or 3,
+        tasks_per_list=payload.tasks or 10,
+        comments_per_task=payload.comments or 3,
+        docs_per_space=payload.docs or 2,
+        schedule_entries=payload.schedule or 6,
+    )
+    result = await populate_demo(session, tenant.slug, options)
+    return DemoSeedResponse(
+        tenant_id=result.tenant_id,
+        spaces=result.spaces,
+        lists=result.lists,
+        tasks=result.tasks,
+        comments=result.comments,
+        docs=result.docs,
+        employees=result.employees,
+        operators=result.operators,
+        clients=result.clients,
+        schedule_entries=result.schedule_entries,
     )
 
 

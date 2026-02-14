@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,6 @@ sys.path.insert(0, str(REPO_ROOT / 'services/api/src'))
 sys.path.insert(0, str(REPO_ROOT / 'packages/common_auth/src'))
 sys.path.insert(0, str(REPO_ROOT / 'packages/common_events/src'))
 sys.path.insert(0, str(REPO_ROOT / 'packages/doc_ingest/src'))
-sys.path.insert(0, str((REPO_ROOT / '..').resolve() / 'toolfront_registry_client'))
 
 from fastapi.testclient import TestClient
 
@@ -109,6 +109,45 @@ def test_tasks_with_unknown_project_returns_404():
 
 @pytest.mark.asyncio
 async def test_get_tenant_headers_accepts_either_header():
-    result = await get_tenant_headers(x_tenant_id=None, x_scr_tenant="tenant-xyz", x_request_id="req-1", idempotency_key=None)
+    request = SimpleNamespace(state=SimpleNamespace())
+    result = await get_tenant_headers(
+        request=request,  # type: ignore[arg-type]
+        x_tenant_id=None,
+        x_scr_tenant="tenant-xyz",
+        x_request_id="req-1",
+        idempotency_key=None,
+        x_user_id="user-legacy",
+        x_scopes="taskr.tasks.read taskr.tasks.write",
+        x_token_balance="42.5",
+    )
     assert result.tenant_id == "tenant-xyz"
     assert result.request_id == "req-1"
+    assert result.user_id == "user-legacy"
+    assert result.scopes == ("taskr.tasks.read", "taskr.tasks.write")
+    assert result.token_balance == Decimal("42.5")
+
+
+@pytest.mark.asyncio
+async def test_get_tenant_headers_prefers_claims_data():
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            token_claims={
+                "tenant": "tenant-claims",
+                "sub": "user-claims",
+                "scopes": ["alpha.read", "beta.write"],
+                "token_balance": "3.25",
+            }
+        )
+    )
+    result = await get_tenant_headers(
+        request=request,  # type: ignore[arg-type]
+        x_tenant_id="tenant-header",
+        x_scr_tenant=None,
+        x_user_id="user-header",
+        x_scopes="legacy.scope",
+        x_token_balance="1.5",
+    )
+    assert result.tenant_id == "tenant-claims"
+    assert result.user_id == "user-claims"
+    assert result.scopes == ("alpha.read", "beta.write")
+    assert result.token_balance == Decimal("3.25")

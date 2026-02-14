@@ -11,6 +11,9 @@ import httpx
 
 from app.core.config import settings
 from app.core.db import SessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.core import Notification
 from app.services.tenant_notifications import fetch_channels
 
 logger = logging.getLogger(__name__)
@@ -137,6 +140,7 @@ class NotificationService:
         if message is None:
             logger.debug("Notification event %s ignored (no template)", event.event_type)
             return
+        await self._store_notification(event, message)
         channels = await self._get_channels(event.tenant_id)
         if not channels:
             return
@@ -145,6 +149,26 @@ class NotificationService:
             return
         for channel in recipients:
             await self._dispatch(channel, message, event)
+
+    async def _store_notification(self, event: NotificationEvent, message: NotificationMessage) -> None:
+        try:
+            async with SessionLocal() as session:
+                row = Notification(
+                    tenant_id=event.tenant_id,
+                    event_type=event.event_type,
+                    title=message.title,
+                    body=message.body,
+                    cta_path=message.cta_path,
+                    payload=event.payload,
+                )
+                session.add(row)
+                try:
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+        except Exception:
+            logger.exception("Failed to persist notification event", extra={"tenant_id": str(event.tenant_id)})
 
     async def _get_channels(self, tenant_id: uuid.UUID) -> list[ChannelConfig]:
         cached = self._cache.get(tenant_id)
@@ -190,6 +214,53 @@ class NotificationService:
                 title="Meeting summary updated",
                 body=f"{title}\n{body}".strip(),
                 cta_path=payload.get("cta_path"),
+            )
+        if event.event_type == "dedicated.assignment.status_changed":
+            agent = payload.get("agent_slug") or payload.get("assignment_id") or "Dedicated agent"
+            status_value = str(payload.get("status") or "unknown").upper()
+            title = f"{agent} status changed"
+            body = (
+                f"Assignment {payload.get('assignment_id')} is now {status_value}."
+            )
+            return NotificationMessage(
+                title=title,
+                body=body,
+                cta_path=payload.get("cta_path") or "/dedicated",
+            )
+        if event.event_type == "dedicated.assignment.node_detached":
+            agent = payload.get("agent_slug") or payload.get("assignment_id") or "Dedicated agent"
+            reason = payload.get("reason") or "detached from node"
+            title = f"{agent} node detached"
+            body = f"Assignment {payload.get('assignment_id')} detached from node {payload.get('node_id') or 'unknown'} ({reason})."
+            return NotificationMessage(
+                title=title,
+                body=body,
+                cta_path=payload.get("cta_path") or "/dedicated",
+            )
+        if event.event_type == "comment.mention":
+            task_title = payload.get("task_title") or "a task"
+            mention_values = [str(item) for item in (payload.get("mentions") or []) if item]
+            mention_label = ", ".join([item if item.startswith("@") else f"@{item}" for item in mention_values[:3]])
+            if len(mention_values) > 3:
+                mention_label = f"{mention_label} +{len(mention_values) - 3} more"
+            snippet = payload.get("snippet") or ""
+            snippet = snippet.strip()
+            if len(snippet) > 280:
+                snippet = f"{snippet[:277]}..."
+            title = f"Mention in {task_title}"
+            body_lines = []
+            if mention_label:
+                body_lines.append(f"Mentions: {mention_label}")
+            if snippet:
+                body_lines.append(snippet)
+            body = "\n".join(body_lines).strip()
+            cta_path = payload.get("cta_path")
+            if not cta_path and payload.get("task_id"):
+                cta_path = f"/tasks/{payload.get('task_id')}"
+            return NotificationMessage(
+                title=title,
+                body=body,
+                cta_path=cta_path,
             )
         return None
 

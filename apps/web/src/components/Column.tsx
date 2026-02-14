@@ -35,6 +35,7 @@ type ColumnProps = {
   onFeedback?(taskId: string, rating: number): void;
   activeTaskId?: string | null;
   onSelectTask?(taskId: string): void;
+  isDraggingTask?: boolean;
 };
 
 const FALLBACK_COLORS: Record<string, string> = {
@@ -44,6 +45,7 @@ const FALLBACK_COLORS: Record<string, string> = {
 };
 
 const EMPTY_MESSAGE = "No tasks yet.";
+const DROP_HINT_MESSAGE = "Drop task here";
 
 export function Column({
   status,
@@ -52,7 +54,8 @@ export function Column({
   onMoveTask,
   onFeedback,
   activeTaskId,
-  onSelectTask
+  onSelectTask,
+  isDraggingTask
 }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: status.status_id
@@ -65,10 +68,16 @@ export function Column({
     return FALLBACK_COLORS[status.category?.toLowerCase() ?? ""] ?? "hsl(220deg 16% 40%)";
   }, [status.color, status.category]);
 
+  const columnClasses = [
+    "board-column",
+    isOver ? "is-drag-over" : "",
+    isDraggingTask ? "drop-target" : ""
+  ].filter(Boolean).join(" ");
+
   return (
     <section
       ref={setNodeRef}
-      className={`board-column${isOver ? " drop-target" : ""}`}
+      className={columnClasses}
       aria-label={`${status.name} column`}
     >
       <div className="column-header">
@@ -85,7 +94,9 @@ export function Column({
 
       <div className="column-tasks">
         {tasks.length === 0 ? (
-          <p className="empty-column">{EMPTY_MESSAGE}</p>
+          <div className={`empty-column${isDraggingTask ? " drop-hint" : ""}`}>
+            {isDraggingTask ? DROP_HINT_MESSAGE : EMPTY_MESSAGE}
+          </div>
         ) : (
           tasks.map((task) => {
             const destinationLists = lists.filter(

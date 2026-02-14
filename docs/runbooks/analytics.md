@@ -57,7 +57,7 @@ pip install aiosqlite
 ```
 
 ## Frontend
-The dashboard is composed of Plane-style widgets under `apps/web/src/components/dashboard/widgets/` and a drag-and-drop grid.
-- Switch to Dashboard view (top bar or press `4`).
-- Edit layout to drag widgets; save/cancel/reset.
-- Command Palette (Cmd/Ctrl+K): Refresh (R), Edit (E), Save (S).
+- TaskR UI dashboard lives in `apps/taskr-ui/src/components/DashboardView.tsx` and pulls live analytics via `useAnalytics`.
+- Switch to Dashboard view from the top bar (or press `4`).
+- `Refresh` button reloads both analytics and task queries; prior cards and charts sever their cache on reload.
+- Legacy Plane widgets remain under `apps/web/...` for reference but are no longer active.

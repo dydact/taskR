@@ -209,7 +209,7 @@
       "schema_ids": []
     }
   ],
-  "source": "vNdydact",
+  "source": "dydact",
   "toolfront_base": {
     "cloud": "https://toolfront.api.dydact.io",
     "edge": "http://localhost:3002"

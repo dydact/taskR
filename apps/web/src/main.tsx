@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
+import "./views/placeholder-views.css";
 import { TaskRClientProvider } from "./lib/client";
 import { env } from "./config/env";
 import { ShellProvider } from "./context/ShellContext";

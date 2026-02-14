@@ -25,7 +25,7 @@ async def main() -> None:
     parser.add_argument("--notes", help="Optional drill note")
     parser.add_argument(
         "--api-url",
-        default=os.getenv("TASKR_API_URL", "http://localhost:8000"),
+        default=os.getenv("TASKR_API_URL", "http://localhost:8010"),
         help="TaskR API base URL",
     )
     parser.add_argument(

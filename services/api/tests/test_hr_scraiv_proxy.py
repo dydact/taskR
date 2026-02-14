@@ -3,9 +3,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from decimal import Decimal
+
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient, Response
+from httpx import ASGITransport, AsyncClient, Response
 
 TEST_FILE = Path(__file__).resolve()
 REPO_ROOT = TEST_FILE.parents[3]
@@ -35,7 +37,7 @@ async def test_clock_in_proxies_to_scraiv(monkeypatch):
     stub = StubClient()
     app.dependency_overrides[get_scraiv_client] = lambda: stub
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/hr/timeclock/in",
             json={"notes": "hello"},
@@ -60,7 +62,7 @@ async def test_scraiv_error_propagates(monkeypatch):
 
     app.dependency_overrides[get_scraiv_client] = lambda: FailingClient()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/hr/timeclock/in",
             json={},
@@ -80,7 +82,7 @@ async def test_missing_scraiv_config_returns_503(monkeypatch):
     monkeypatch.setattr(settings, "scraiv_base_url", None, raising=False)
     monkeypatch.setattr(settings, "scraiv_api_key", None, raising=False)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/hr/timeclock/in",
             json={},
@@ -100,7 +102,14 @@ async def test_scraiv_client_builds_headers_and_sends(monkeypatch):
         return Response(200, json={"ok": True})
 
     client = ScrAivClient(base_url="https://scr.example", api_key="secret", sender=sender)
-    tenant = TenantHeaders(tenant_id="acme", user_id="user-1", request_id="req-1", idempotency_key="idem-1")
+    tenant = TenantHeaders(
+        tenant_id="acme",
+        user_id="user-1",
+        request_id="req-1",
+        idempotency_key="idem-1",
+        scopes=("taskr.hr.read", "taskr.hr.write"),
+        token_balance=Decimal("12.50"),
+    )
 
     result = await client.clock_in(tenant, {"notes": "hi"})
 
@@ -113,6 +122,8 @@ async def test_scraiv_client_builds_headers_and_sends(monkeypatch):
     assert headers["x-user-id"] == "user-1"
     assert headers["x-request-id"] == "req-1"
     assert headers["idempotency-key"] == "idem-1"
+    assert headers["x-scopes"] == "taskr.hr.read taskr.hr.write"
+    assert headers["x-token-balance"] == "12.50"
     assert headers["x-api-key"] == "secret"
 
 

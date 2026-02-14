@@ -27,7 +27,7 @@ Usage
 2) Frontend
    - cd apps/web && npm install && npm run dev
    - Set Vite env vars:
-     - VITE_TASKR_API=http://localhost:8000
+     - VITE_TASKR_API=http://localhost:8010
      - VITE_TENANT_ID=demo
      - VITE_TASKR_USER_ID=demo-user
    - Open http://localhost:5173

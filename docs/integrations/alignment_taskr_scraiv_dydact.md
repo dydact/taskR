@@ -2,9 +2,9 @@
 
 This repository implements the integration points to align taskR with scrAIv and Dydact Insight.
 
-Canonical references (source of truth live in vNdydact):
-- vNdydact/docs/integrations/alignment_taskr_scraiv_dydact.md
-- vNdydact/docs/integrations/insight_summaries_contract.md
+Canonical references (source of truth live in dydact):
+- dydact/docs/integrations/alignment_taskr_scraiv_dydact.md
+- dydact/docs/integrations/insight_summaries_contract.md
 
 Key surfaces wired in taskR:
 - Dydact Insight

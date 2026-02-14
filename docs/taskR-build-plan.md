@@ -1,4 +1,4 @@
-# taskR Delivery Plan
+# taskRte  Delivery Plan
 
 ## Mission & Guardrails
 - Build taskR as the intelligent, multi-tenant task & project manager for the Dydact platform, sharing engine primitives with scrAIv while targeting general productivity use-cases.
@@ -123,13 +123,6 @@
   - Build board view grouping by status with drag-and-drop updating via API and optimistic UI updates.
   - Establish real-time subscriptions (WebSocket/SSE) for task change broadcasting to active views.
 - **Exit Criteria:** Users can toggle between list/board views of a list, reorder tasks via drag/drop, and see updates live across sessions.
-
-#### Milestone M2.6 – Omni-channel notifications (Week 6) **(In progress – gated by unified auth)**
-- **Scope:** Allow tenants to subscribe to TaskR events (meeting notes, task lifecycle, clearinghouse jobs) and deliver messages over Slack, Discord, and SMS without altering core workflows.
-- **Status:** Backend API `/tenant/config/notifications` and meeting-note dispatch pipeline landed. Slack/Discord webhook adapters and Twilio SMS integration ship with queue + retry controls.
-- **Risks/Dependencies:** Full rollout awaits unified auth so channel secrets inherit platform-wide credential policies. Need consistent `Authorization`/`X-Tenant-Id` enforcement before enabling production tenants.
-- **Next Steps:** Wire notification worker into unified auth headers, expand event emitters (task updates, clearinghouse), and surface admin UI once auth layer is live.
-- **Exit Criteria:** Tenants configure channels securely via API, receive subscribed notifications, and operations runbook documents environment variables, rollout, and troubleshooting.
 
 ### Phase 3 – Knowledge & Insight Layer
 #### Milestone M3.1 – memPODS ingestion pipeline (Week 6-7)
@@ -341,7 +334,6 @@ Milestone M5.3 – Cross-product integrations (Completed)
   - Normalize availability, billing codes, and HR policies from scrAIv scheduling APIs and openemr feeds into a taskR orchestration service.
   - Extend automation flows so AI guardrails (memPODS, Insight, AutoPM) generate staffing nudges, overtime alerts, and billing exceptions back to scrAIv/openemr.
   - Ship integration tests, sample tenants, and runbooks covering shared identity, consent, and data residency across the three systems.
-  - Coordinate with the TaskR agent owners to point their runtime at the documented scrAIv endpoints (`TR_SCRAIV_BASE_URL`, `TR_SCRAIV_API_KEY`, etc.) and ensure the Python proxy bundles `greenlet` so `/hr/*` routing stays healthy.
 - **Exit Criteria:** Unified scheduler propagates updates between taskR, scrAIv, and openemr within SLA; AI guardrails flag conflicts; runbooks document recovery paths and support handoffs.
 
 ### Phase 6 – Hardening, Compliance, Launch Readiness

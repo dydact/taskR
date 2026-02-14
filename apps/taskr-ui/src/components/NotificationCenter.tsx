@@ -1,192 +1,161 @@
-import { useState, useEffect } from 'react';
-import { X, Clock, CheckCircle, AlertCircle, User, Zap } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { useTheme } from './ThemeContext';
-import { Avatar, AvatarFallback } from './ui/avatar';
-import dydactLogo from 'figma:asset/d8653aa4a6b3b745bda3371d1f0f71f3602055f4.png';
+import { useTaskRClient } from '../lib/taskrClient';
+import type { ScrAlert } from '@dydact/taskr-api-client';
 
-type NotificationStatus = 'idle' | 'unread' | 'processing';
+type NotificationStatus = 'idle' | 'attention';
 
-interface Notification {
-  id: number;
-  type: 'assignment' | 'update' | 'completion' | 'mention' | 'automation';
-  sender: string;
-  senderInitials: string;
-  senderColor: string;
-  summary: string;
-  time: string;
-  isRead: boolean;
-  isOngoing?: boolean;
-}
+const severityBadgeStyles: Record<string, string> = {
+  critical: 'from-red-500 to-rose-500',
+  high: 'from-orange-500 to-red-400',
+  medium: 'from-amber-400 to-yellow-400',
+  low: 'from-emerald-400 to-green-500'
+};
 
-const mockNotifications: Notification[] = [
-  {
-    id: 1,
-    type: 'assignment',
-    sender: 'Sarah K.',
-    senderInitials: 'SK',
-    senderColor: 'from-pink-500 to-orange-400',
-    summary: 'Assigned you to "Update landing page design"',
-    time: '2m ago',
-    isRead: false,
-  },
-  {
-    id: 2,
-    type: 'automation',
-    sender: 'AI Assistant',
-    senderInitials: 'AI',
-    senderColor: 'from-violet-500 to-blue-500',
-    summary: 'Auto-assigned task based on your expertise',
-    time: '5m ago',
-    isRead: false,
-    isOngoing: true,
-  },
-  {
-    id: 3,
-    type: 'update',
-    sender: 'John D.',
-    senderInitials: 'JD',
-    senderColor: 'from-green-500 to-emerald-400',
-    summary: 'Moved "API Integration" to Review',
-    time: '12m ago',
-    isRead: true,
-  },
-  {
-    id: 4,
-    type: 'mention',
-    sender: 'Mike J.',
-    senderInitials: 'MJ',
-    senderColor: 'from-blue-500 to-cyan-400',
-    summary: 'Mentioned you in "Sprint Planning" comments',
-    time: '1h ago',
-    isRead: false,
-  },
-  {
-    id: 5,
-    type: 'completion',
-    sender: 'Emily C.',
-    senderInitials: 'EC',
-    senderColor: 'from-orange-500 to-red-400',
-    summary: 'Completed "Design system components"',
-    time: '2h ago',
-    isRead: true,
-  },
-  {
-    id: 6,
-    type: 'update',
-    sender: 'Anna T.',
-    senderInitials: 'AT',
-    senderColor: 'from-purple-500 to-violet-400',
-    summary: 'Updated deadline for "Marketing Campaign"',
-    time: '3h ago',
-    isRead: true,
-  },
-];
+const severityLabels: Record<string, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low'
+};
 
 export function NotificationCenter() {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+  const [alerts, setAlerts] = useState<ScrAlert[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const client = useTaskRClient();
   const { theme, colors } = useTheme();
   const isDark = theme === 'dark';
 
-  const unreadCount = notifications.filter(n => !n.isRead).length;
-  const hasOngoing = notifications.some(n => n.isOngoing);
+  useEffect(() => {
+    let cancelled = false;
 
-  // Determine status
-  const getStatus = (): NotificationStatus => {
-    if (hasOngoing) return 'processing';
-    if (unreadCount > 0) return 'unread';
-    return 'idle';
-  };
+    const fetchAlerts = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await client.alerts.scr.list({ limit: 40 });
+        if (!cancelled) {
+          setAlerts(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message);
+          setAlerts([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
 
-  const status = getStatus();
+    void fetchAlerts();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
-  const markAsRead = (id: number) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, isRead: true } : n))
-    );
-  };
+  const unreadCount = alerts.filter((alert) => !alert.acknowledged_at).length;
+  const status: NotificationStatus = unreadCount > 0 ? 'attention' : 'idle';
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-  };
-
-  const deleteNotification = (id: number) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'assignment':
-        return User;
-      case 'automation':
-        return Zap;
-      case 'completion':
-        return CheckCircle;
-      case 'mention':
-        return AlertCircle;
-      case 'update':
-        return Clock;
-      default:
-        return Clock;
+  const acknowledgeAlert = async (alertId: string) => {
+    try {
+      const updated = await client.alerts.scr.acknowledge(alertId, {});
+      setAlerts((prev) => prev.map((alert) => (alert.alert_id === alertId ? updated : alert)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
     }
   };
 
+  const formatTimestamp = (iso: string) => {
+    try {
+      const date = new Date(iso);
+      return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+  const formatGroupLabel = (date: Date) => {
+    const today = new Date();
+    const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffMs = startToday.getTime() - target.getTime();
+    const diffDays = Math.round(diffMs / 86400000);
+    if (diffDays <= 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: today.getFullYear() === date.getFullYear() ? undefined : 'numeric' });
+  };
+
+  const groupedAlerts = useMemo(() => {
+    if (!alerts.length) return [];
+    const buckets = new Map<string, { label: string; date: Date; items: ScrAlert[] }>();
+    alerts.forEach((alert) => {
+      const created = new Date(alert.created_at);
+      const key = created.toISOString().slice(0, 10);
+      const bucket = buckets.get(key) ?? { label: formatGroupLabel(created), date: created, items: [] };
+      bucket.items.push(alert);
+      buckets.set(key, bucket);
+    });
+    return Array.from(buckets.values())
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .map((bucket) => ({
+        ...bucket,
+        items: bucket.items.sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
+      }));
+  }, [alerts]);
+
   return (
     <>
-      {/* Notification Button - Fixed Bottom Right */}
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Open taskR attention center"
         className={`
           fixed bottom-6 right-6 z-50
-          w-14 h-14 rounded-full 
-          bg-white shadow-2xl
+          w-14 h-14 rounded-full
           flex items-center justify-center
           transition-all duration-200
-          hover:scale-110 hover:shadow-xl
+          hover:scale-110
+          focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-300/60
           ${isOpen ? 'scale-110' : ''}
+          ${status === 'attention' && !isOpen ? 'animate-[pulse_3s_ease-in-out_infinite]' : ''}
         `}
       >
-        {/* Status Ring */}
-        <div
-          className={`
-            absolute inset-0 rounded-full
-            ${status === 'unread' ? 'ring-4 ring-red-500 animate-pulse' : ''}
-            ${status === 'processing' ? 'ring-4 ring-green-500' : ''}
-          `}
-        />
-
-        {/* Inner content */}
         <div className="relative flex items-center justify-center">
-          {/* R logo - styled based on status */}
-          <span
+          <img
+            src="/brand/taskr-favicon.png"
+            alt=""
+            aria-hidden="true"
             className={`
-              font-bold text-xl
-              ${status === 'idle' ? 'text-black' : ''}
-              ${status === 'unread' ? 'text-red-500' : ''}
-              ${status === 'processing' ? 'text-green-500' : ''}
+              w-12 h-12 select-none pointer-events-none transition
+              ${status === 'idle' ? 'opacity-60 grayscale' : 'opacity-100'}
             `}
-          >
-            R{status === 'unread' ? '!' : ''}
-          </span>
+          />
 
-          {/* Unread Badge */}
-          {unreadCount > 0 && status !== 'processing' && (
+          {unreadCount > 0 && (
             <Badge className="absolute -top-1 -right-1 w-5 h-5 p-0 flex items-center justify-center bg-red-500 text-white border-0 text-[10px] rounded-full">
               {unreadCount}
             </Badge>
           )}
-
-          {/* Processing indicator */}
-          {status === 'processing' && (
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-          )}
         </div>
       </button>
 
-      {/* Notification Panel */}
       {isOpen && (
         <div
           className={`
@@ -198,7 +167,6 @@ export function NotificationCenter() {
             animate-in slide-in-from-bottom-4 duration-300
           `}
         >
-          {/* Header */}
           <div className={`px-4 py-3 border-b ${colors.cardBorder} flex items-center justify-between`}>
             <div className="flex items-center gap-2">
               <h3 className={colors.text}>Notifications</h3>
@@ -209,16 +177,6 @@ export function NotificationCenter() {
               )}
             </div>
             <div className="flex items-center gap-1">
-              {unreadCount > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={markAllAsRead}
-                  className={`${colors.textSecondary} ${isDark ? 'hover:text-white hover:bg-white/10' : 'hover:text-slate-900 hover:bg-slate-100/60'} rounded-lg text-[11px] h-7 px-2`}
-                >
-                  Mark all read
-                </Button>
-              )}
               <Button
                 size="icon"
                 variant="ghost"
@@ -230,121 +188,89 @@ export function NotificationCenter() {
             </div>
           </div>
 
-          {/* Notifications List */}
           <ScrollArea className="max-h-[500px]">
             <div className="p-2">
-              {notifications.length === 0 ? (
+              {loading ? (
                 <div className="py-12 text-center">
-                  <p className={`${colors.textSecondary} text-[13px]`}>No notifications</p>
+                  <p className={`${colors.textSecondary} text-[13px]`}>Loading alerts…</p>
+                </div>
+              ) : alerts.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className={`${colors.textSecondary} text-[13px]`}>
+                    {error ? `Failed to load alerts: ${error}` : "You're all caught up."}
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-1">
-                  {notifications.map(notification => {
-                    const Icon = getNotificationIcon(notification.type);
-                    return (
-                      <div
-                        key={notification.id}
-                        onClick={() => !notification.isRead && markAsRead(notification.id)}
-                        className={`
-                          group relative p-3 rounded-xl cursor-pointer
-                          transition-all duration-180
-                          ${!notification.isRead
-                            ? isDark
-                              ? 'bg-violet-500/10 hover:bg-violet-500/15 border border-violet-500/20'
-                              : 'bg-violet-50 hover:bg-violet-100 border border-violet-200/60'
-                            : isDark
-                              ? 'bg-white/5 hover:bg-white/10'
-                              : 'bg-white/40 hover:bg-white/60'
-                          }
-                        `}
-                      >
-                        {/* Unread indicator dot */}
-                        {!notification.isRead && (
-                          <div className="absolute top-3 left-1 w-2 h-2 bg-violet-500 rounded-full" />
-                        )}
+                <div className="space-y-4">
+                  {groupedAlerts.map((group) => (
+                    <div key={group.label}>
+                      <div className={`${colors.textSecondary} text-[11px] uppercase tracking-wide px-1`}>{group.label}</div>
+                      <div className="space-y-2 mt-2">
+                        {group.items.map((alert) => {
+                          const severity = (alert.severity || 'low').toLowerCase();
+                          const accent = severityBadgeStyles[severity] ?? 'from-slate-300 to-slate-200';
+                          const label = severityLabels[severity] ?? alert.severity;
+                          const acknowledged = !!alert.acknowledged_at;
 
-                        <div className="flex items-start gap-3">
-                          {/* Avatar */}
-                          <Avatar className={`w-9 h-9 border-2 ${isDark ? 'border-white/20' : 'border-white'} flex-shrink-0`}>
-                            <AvatarFallback className={`bg-gradient-to-br ${notification.senderColor} text-white text-[11px]`}>
-                              {notification.senderInitials}
-                            </AvatarFallback>
-                          </Avatar>
+                          return (
+                            <div
+                              key={alert.alert_id}
+                              className={`
+                                relative rounded-2xl border ${colors.cardBorder}
+                                ${isDark ? 'bg-white/6' : 'bg-white'}
+                                p-3 shadow-sm transition-all duration-200
+                                ${!acknowledged ? 'ring-1 ring-violet-500/30' : ''}
+                              `}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`w-10 h-10 bg-gradient-to-br ${accent} rounded-xl flex items-center justify-center text-white ${!acknowledged ? 'animate-pulse' : ''}`}>
+                                  {acknowledged ? <ShieldCheck className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className={`${colors.text} text-sm font-semibold`}>{alert.kind}</h4>
+                                    <Badge className={`bg-gradient-to-r ${accent} text-white border-0 text-[10px] px-1.5`}>
+                                      {label}
+                                    </Badge>
+                                    {!acknowledged && (
+                                      <Badge className="bg-blue-500/20 text-blue-100 border-0 text-[10px] animate-pulse">
+                                        NEW
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className={`${colors.textSecondary} text-xs mt-1`}>{alert.message}</p>
+                                  <p className={`${colors.textSecondary} text-[11px] mt-2`}>
+                                    {formatTimestamp(alert.created_at)} • Source: {alert.source}
+                                  </p>
+                                </div>
+                              </div>
 
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <span className={`${colors.text} text-[13px]`}>
-                                {notification.sender}
-                              </span>
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                {notification.isOngoing && (
-                                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                              <div className="mt-3 flex items-center justify-between">
+                                <div className={`${colors.textSecondary} text-[11px]`}>
+                                  Alert ID: {alert.alert_id.slice(0, 8)}… • {acknowledged ? 'Acknowledged' : 'Awaiting review'}
+                                </div>
+                                {!acknowledged && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => acknowledgeAlert(alert.alert_id)}
+                                    className={`${colors.textSecondary} ${isDark ? 'hover:text-white hover:bg-white/10' : 'hover:text-slate-900 hover:bg-slate-100/60'} rounded-lg text-[11px] h-7 px-3`}
+                                  >
+                                    Mark resolved
+                                  </Button>
                                 )}
-                                <Icon className={`w-3.5 h-3.5 ${colors.textSecondary}`} />
                               </div>
                             </div>
-                            <p className={`${colors.textSecondary} text-[12px] line-clamp-2 leading-snug`}>
-                              {notification.summary}
-                            </p>
-                            <div className="flex items-center justify-between mt-2">
-                              <span className={`${colors.textSecondary} text-[11px] opacity-70`}>
-                                {notification.time}
-                              </span>
-                              {notification.isOngoing && (
-                                <Badge className="bg-green-500/20 text-green-400 border-0 text-[9px] px-1.5 h-4">
-                                  Ongoing
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Delete button (visible on hover) */}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteNotification(notification.id);
-                            }}
-                            className={`
-                              w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0
-                              ${colors.textSecondary} ${isDark ? 'hover:text-white hover:bg-white/10' : 'hover:text-slate-900 hover:bg-slate-100/60'}
-                              rounded-lg
-                            `}
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           </ScrollArea>
-
-          {/* Footer */}
-          {notifications.length > 0 && (
-            <div className={`px-4 py-3 border-t ${colors.cardBorder}`}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`w-full ${colors.textSecondary} ${isDark ? 'hover:text-white hover:bg-white/10' : 'hover:text-slate-900 hover:bg-slate-100/60'} rounded-xl text-[12px]`}
-              >
-                View All Notifications
-              </Button>
-            </div>
-          )}
         </div>
-      )}
-
-      {/* Backdrop (click to close) */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setIsOpen(false)}
-        />
       )}
     </>
   );

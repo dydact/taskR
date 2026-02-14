@@ -12,7 +12,7 @@ This document tracks the assumptions and open questions while we stand up the ev
 - `doc.publish` – downstream event describing doc/revision updates for memPODS ingestion and AI surfaces.
 
 All bindings are now described in the vendored manifest at
-`toolfront-registry/providers.json`, exported from vNdydact. taskR and scrAIv
+`toolfront-registry/providers.json`, exported from dydact. taskR and scrAIv
 consume the manifest via the shared `toolfront_registry_client` package so they
 no longer hard-code provider URLs or scopes.
 

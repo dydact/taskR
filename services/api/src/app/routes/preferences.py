@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from typing import Any, Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -10,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db_session
 from app.events.bus import event_bus
-from app.models.core import PreferenceFeedback, PreferenceModel, PreferenceRollout, PreferenceVariant
+from app.models.core import (
+    PreferenceFeedback,
+    PreferenceModel,
+    PreferenceRollout,
+    PreferenceVariant,
+    UserPreference,
+)
 from app.routes.utils import (
     get_preference_model,
     get_preference_rollout,
@@ -18,6 +25,8 @@ from app.routes.utils import (
     get_tenant,
 )
 from app.schemas import (
+    PreferencesState,
+    PreferencesUpdate,
     PreferenceFeedbackCreate,
     PreferenceFeedbackRead,
     PreferenceModelCreate,
@@ -36,6 +45,111 @@ from app.services.preferences import evaluate_model_rollouts, refresh_model_metr
 from common_auth import TenantHeaders, get_tenant_headers
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
+
+DEFAULT_PREFERENCES = PreferencesState()
+
+
+async def _load_preferences_state(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_key: str,
+) -> PreferencesState:
+    state = DEFAULT_PREFERENCES.model_dump()
+    result = await session.execute(
+        select(UserPreference).where(
+            UserPreference.tenant_id == tenant_id,
+            UserPreference.user_id == user_key,
+        )
+    )
+    for record in result.scalars().all():
+        value = record.value_json.get("value", record.value_json)
+        if record.key == "favorites" and isinstance(value, list):
+            state["favorites"] = [str(item) for item in value if isinstance(item, str)]
+        elif record.key == "list_view_columns" and isinstance(value, dict):
+            state["list_view_columns"] = {str(k): bool(v) for k, v in value.items()}
+        elif record.key in state:
+            state[record.key] = value
+    return PreferencesState(**state)
+
+
+async def _upsert_preference_entry(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_key: str,
+    key: str,
+    value: Any,
+) -> None:
+    result = await session.execute(
+        select(UserPreference).where(
+            UserPreference.tenant_id == tenant_id,
+            UserPreference.user_id == user_key,
+            UserPreference.key == key,
+        )
+    )
+    record = result.scalar_one_or_none()
+    payload = {"value": value}
+    if record is None:
+        record = UserPreference(
+            tenant_id=tenant_id,
+            user_id=user_key,
+            key=key,
+            value_json=payload,
+        )
+        session.add(record)
+    else:
+        record.value_json = payload
+        record.updated_at = datetime.utcnow()
+    await session.flush()
+
+
+def _normalize_favorites(values: Iterable[str] | None) -> list[str]:
+    if not values:
+        return []
+    unique: list[str] = []
+    seen = set()
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        trimmed = item.strip()
+        if trimmed and trimmed not in seen:
+            seen.add(trimmed)
+            unique.append(trimmed)
+    return unique
+
+
+@router.get("", response_model=PreferencesState)
+async def get_preferences_state(
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> PreferencesState:
+    tenant = await get_tenant(session, headers.tenant_id)
+    user_key = headers.user_id or "default"
+    state = await _load_preferences_state(session, tenant.tenant_id, user_key)
+    return state
+
+
+@router.patch("", response_model=PreferencesState)
+async def patch_preferences_state(
+    payload: PreferencesUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> PreferencesState:
+    tenant = await get_tenant(session, headers.tenant_id)
+    user_key = headers.user_id or "default"
+    updates = payload.model_dump(exclude_none=True)
+
+    if "favorites" in updates:
+        updates["favorites"] = _normalize_favorites(updates["favorites"])
+    if "list_view_columns" in updates and isinstance(updates["list_view_columns"], dict):
+        updates["list_view_columns"] = {
+            str(k): bool(v) for k, v in updates["list_view_columns"].items()
+        }
+
+    if updates:
+        for pref_key, pref_value in updates.items():
+            await _upsert_preference_entry(session, tenant.tenant_id, user_key, pref_key, pref_value)
+    await session.flush()
+    return await _load_preferences_state(session, tenant.tenant_id, user_key)
 
 
 class PreferenceSummaryCache:

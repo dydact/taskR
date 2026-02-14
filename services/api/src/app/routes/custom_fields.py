@@ -7,15 +7,19 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_db_session
 from app.events.bus import event_bus
-from app.models.core import CustomFieldDefinition, List, Task, TaskCustomField
+from app.models.core import CustomFieldDefinition, CustomFieldOption, List, Task, TaskCustomField
 from app.routes.utils import get_list, get_space, get_tenant
 from app.schemas import (
     CustomFieldDefinitionCreate,
     CustomFieldDefinitionRead,
     CustomFieldDefinitionUpdate,
+    CustomFieldOptionCreate,
+    CustomFieldOptionRead,
+    CustomFieldOptionUpdate,
     TaskCustomFieldValueRead,
     TaskCustomFieldValueUpsert,
 )
@@ -42,6 +46,17 @@ async def _serialize_custom_field(definition: CustomFieldDefinition) -> CustomFi
     return CustomFieldDefinitionRead.model_validate(definition)
 
 
+def _serialize_option(option: CustomFieldOption) -> CustomFieldOptionRead:
+    return CustomFieldOptionRead.model_validate(option)
+
+
+def _sync_option_config(definition: CustomFieldDefinition) -> None:
+    options = [opt.value for opt in definition.options if opt.is_active]
+    config = dict(definition.config or {})
+    config["options"] = options
+    definition.config = config
+
+
 def _normalize_field_value(field: CustomFieldDefinition, value: Any) -> dict:
     field_type = field.field_type
     config = field.config or {}
@@ -63,12 +78,16 @@ def _normalize_field_value(field: CustomFieldDefinition, value: Any) -> dict:
     elif field_type == "boolean":
         normalized = bool(value)
     elif field_type == "select":
-        options = config.get("options", [])
+        options = [opt.value for opt in getattr(field, "options", []) if getattr(opt, "is_active", True)]
+        if not options:
+            options = config.get("options", [])
         if value not in options:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Value not in select options")
         normalized = value
     elif field_type == "multi_select":
-        options = set(config.get("options", []))
+        options = {opt.value for opt in getattr(field, "options", []) if getattr(opt, "is_active", True)}
+        if not options:
+            options = set(config.get("options", []))
         if not isinstance(value, (list, tuple)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Value must be list for multi_select")
         invalid = [item for item in value if item not in options]
@@ -96,9 +115,13 @@ async def list_custom_fields_for_space(
 ) -> list[CustomFieldDefinitionRead]:
     tenant = await get_tenant(session, headers.tenant_id)
     space = await get_space(session, tenant.tenant_id, space_identifier)
-    query = select(CustomFieldDefinition).where(
-        CustomFieldDefinition.tenant_id == tenant.tenant_id,
-        CustomFieldDefinition.space_id == space.space_id,
+    query = (
+        select(CustomFieldDefinition)
+        .options(selectinload(CustomFieldDefinition.options))
+        .where(
+            CustomFieldDefinition.tenant_id == tenant.tenant_id,
+            CustomFieldDefinition.space_id == space.space_id,
+        )
     )
     if not include_inactive:
         query = query.where(CustomFieldDefinition.is_active.is_(True))
@@ -155,6 +178,25 @@ async def create_custom_field(
     )
     session.add(defn)
     await session.flush()
+    if payload.options:
+        if defn.field_type not in {"select", "multi_select"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Options only supported for select fields")
+        for index, option_payload in enumerate(payload.options):
+            option = CustomFieldOption(
+                field_id=defn.field_id,
+                label=option_payload.label,
+                value=option_payload.value,
+                color=option_payload.color,
+                position=option_payload.position if option_payload.position is not None else index,
+                is_active=option_payload.is_active,
+            )
+            session.add(option)
+        await session.flush()
+    await session.refresh(defn, attribute_names=["options"])
+    if defn.field_type in {"select", "multi_select"}:
+        _sync_option_config(defn)
+        await session.flush()
+        await session.refresh(defn, attribute_names=["options"])
     await session.refresh(defn)
 
     result = CustomFieldDefinitionRead.model_validate(defn)
@@ -167,6 +209,22 @@ async def create_custom_field(
         }
     )
     return result
+
+
+def _ensure_select_field(definition: CustomFieldDefinition) -> None:
+    if definition.field_type not in {"select", "multi_select"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Options supported only for select fields")
+
+
+async def _get_field_with_options(session: AsyncSession, tenant_id: uuid.UUID, field_id: uuid.UUID) -> CustomFieldDefinition:
+    definition = await session.get(
+        CustomFieldDefinition,
+        field_id,
+        options=[selectinload(CustomFieldDefinition.options)],
+    )
+    if definition is None or definition.tenant_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Field not found")
+    return definition
 
 
 @router.patch("/{field_id}", response_model=CustomFieldDefinitionRead)
@@ -201,6 +259,11 @@ async def update_custom_field(
         setattr(definition, field, value)
 
     await session.flush()
+    await session.refresh(definition, attribute_names=["options"])
+    if definition.field_type in {"select", "multi_select"}:
+        _sync_option_config(definition)
+        await session.flush()
+        await session.refresh(definition, attribute_names=["options"])
     await session.refresh(definition)
     result = CustomFieldDefinitionRead.model_validate(definition)
     await event_bus.publish(
@@ -212,6 +275,151 @@ async def update_custom_field(
         }
     )
     return result
+
+
+@router.get("/{field_id}/options", response_model=list[CustomFieldOptionRead])
+async def list_field_options(
+    field_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> list[CustomFieldOptionRead]:
+    tenant = await get_tenant(session, headers.tenant_id)
+    definition = await _get_field_with_options(session, tenant.tenant_id, field_id)
+    return [_serialize_option(option) for option in definition.options if option.is_active]
+
+
+@router.post("/{field_id}/options", response_model=CustomFieldOptionRead, status_code=status.HTTP_201_CREATED)
+async def create_field_option(
+    field_id: uuid.UUID,
+    payload: CustomFieldOptionCreate,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> CustomFieldOptionRead:
+    tenant = await get_tenant(session, headers.tenant_id)
+    definition = await _get_field_with_options(session, tenant.tenant_id, field_id)
+    _ensure_select_field(definition)
+
+    duplicate = await session.execute(
+        select(CustomFieldOption).where(
+            CustomFieldOption.field_id == definition.field_id,
+            CustomFieldOption.value == payload.value,
+        )
+    )
+    if duplicate.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Option value already exists")
+
+    next_position = payload.position if payload.position is not None else len(definition.options)
+    option = CustomFieldOption(
+        field_id=definition.field_id,
+        label=payload.label,
+        value=payload.value,
+        color=payload.color,
+        position=next_position,
+        is_active=payload.is_active,
+    )
+    session.add(option)
+    await session.flush()
+    await session.refresh(option)
+    await session.refresh(definition, attribute_names=["options"])
+    _sync_option_config(definition)
+    await session.flush()
+    await session.refresh(option)
+    await session.refresh(definition, attribute_names=["options"])
+
+    await event_bus.publish(
+        {
+            "type": "custom_field.option.created",
+            "tenant_id": headers.tenant_id,
+            "field_id": str(definition.field_id),
+            "option_id": str(option.option_id),
+        }
+    )
+
+    return _serialize_option(option)
+
+
+@router.patch("/{field_id}/options/{option_id}", response_model=CustomFieldOptionRead)
+async def update_field_option(
+    field_id: uuid.UUID,
+    option_id: uuid.UUID,
+    payload: CustomFieldOptionUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> CustomFieldOptionRead:
+    tenant = await get_tenant(session, headers.tenant_id)
+    definition = await _get_field_with_options(session, tenant.tenant_id, field_id)
+    _ensure_select_field(definition)
+
+    option = await session.get(CustomFieldOption, option_id)
+    if option is None or option.field_id != definition.field_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "value" in update_data:
+        duplicate = await session.execute(
+            select(CustomFieldOption).where(
+                CustomFieldOption.field_id == definition.field_id,
+                CustomFieldOption.value == update_data["value"],
+                CustomFieldOption.option_id != option.option_id,
+            )
+        )
+        if duplicate.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Option value already exists")
+
+    for key, value in update_data.items():
+        if key == "position" and value is None:
+            continue
+        setattr(option, key, value)
+
+    await session.flush()
+    await session.refresh(option)
+    await session.refresh(definition, attribute_names=["options"])
+    _sync_option_config(definition)
+    await session.flush()
+    await session.refresh(option)
+    await session.refresh(definition, attribute_names=["options"])
+
+    await event_bus.publish(
+        {
+            "type": "custom_field.option.updated",
+            "tenant_id": headers.tenant_id,
+            "field_id": str(definition.field_id),
+            "option_id": str(option.option_id),
+        }
+    )
+
+    return _serialize_option(option)
+
+
+@router.delete("/{field_id}/options/{option_id}", status_code=status.HTTP_200_OK, response_class=Response)
+async def delete_field_option(
+    field_id: uuid.UUID,
+    option_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    headers: TenantHeaders = Depends(get_tenant_headers),
+) -> None:
+    tenant = await get_tenant(session, headers.tenant_id)
+    definition = await _get_field_with_options(session, tenant.tenant_id, field_id)
+    _ensure_select_field(definition)
+
+    option = await session.get(CustomFieldOption, option_id)
+    if option is None or option.field_id != definition.field_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
+
+    await session.delete(option)
+    await session.flush()
+    await session.refresh(definition, attribute_names=["options"])
+    _sync_option_config(definition)
+    await session.flush()
+
+    await event_bus.publish(
+        {
+            "type": "custom_field.option.deleted",
+            "tenant_id": headers.tenant_id,
+            "field_id": str(definition.field_id),
+            "option_id": str(option_id),
+        }
+    )
 
 
 @router.delete("/{field_id}", status_code=status.HTTP_200_OK, response_class=Response)

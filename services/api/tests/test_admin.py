@@ -16,7 +16,6 @@ sys.path.insert(0, str(REPO_ROOT / "packages/common_auth/src"))
 sys.path.insert(0, str(REPO_ROOT / "packages/common_events/src"))
 sys.path.insert(0, str(REPO_ROOT / "packages/doc_ingest/src"))
 sys.path.insert(0, str(REPO_ROOT / "packages/common_billing/src"))
-sys.path.insert(0, str((REPO_ROOT / "..").resolve() / "toolfront_registry_client"))
 
 from app.events.bus import event_bus
 from app.routes import admin as admin_routes

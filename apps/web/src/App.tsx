@@ -24,7 +24,14 @@ import { ListView } from "./views/ListView";
 import { BoardView } from "./views/BoardView";
 import { CalendarView } from "./views/CalendarView";
 import { ClaimsView } from "./views/ClaimsView";
+import { XoXoView } from "./views/XoXoView";
 import { HRView } from "./views/HRView";
+import { GanttView } from "./views/GanttView";
+import { InboxView } from "./views/InboxView";
+import { GoalsView } from "./views/GoalsView";
+import { DocsView } from "./views/DocsView";
+import { DedicatedView } from "./views/DedicatedView";
+import { DashboardView } from "./views/DashboardView";
 import { ChatOverlay } from "./components/chat/ChatOverlay";
 import { TaskDrawer } from "./components/task/TaskDrawer";
 import { FilterBar, TaskFilters } from "./components/filters/FilterBar";
@@ -40,7 +47,7 @@ import {
   MetricCards
 } from "./components/dashboard/widgets";
 import type { HierarchyList, HierarchySpace, SpaceSummary } from "./types/hierarchy";
-import type { Task, TaskComment, Subtask, CustomFieldValue } from "./types/task";
+import type { ActivityEvent, Task, TaskComment, Subtask, CustomFieldValue } from "./types/task";
 import type { Doc } from "./types/doc";
 import type {
   AnalyticsSummary,
@@ -62,6 +69,8 @@ import { useTaskRClient } from "./lib/client";
 import { useShell } from "./context/ShellContext";
 import type { ViewMode } from "./types/shell";
 import { ApiError } from "@dydact/taskr-api-client";
+import { useAIFeatures } from "./hooks/useAIFeatures";
+import { KairosSuggestionsPanel, DydactDock } from "./components/ai";
 
 ChartJS.register(
   ArcElement,
@@ -168,8 +177,14 @@ const VIEW_LABELS: Record<ViewMode, string> = {
   board: "Board",
   calendar: "Calendar",
   dashboard: "Dashboard",
+  gantt: "Gantt",
+  inbox: "Inbox",
+  goals: "Goals",
   claims: "Claims",
-  hr: "HR"
+  hr: "HR",
+  docs: "Docs",
+  dedicated: "Dedicated",
+  xoxo: "xOxO"
 };
 
 const DEFAULT_COLUMN_VISIBILITY: Record<ColumnKey, boolean> = {
@@ -194,10 +209,12 @@ export const App: React.FC = () => {
     navigation,
     navigationLoading,
     spacesLoading,
-    updateListViewColumns
+    updateListViewColumns,
+    setAiPersona
   } = useShell();
 
   const viewMode = preferences.lastView;
+  const { showKairosSuggestions, showDydactDock } = useAIFeatures();
   const spaces = useMemo<Space[]>(
     () =>
       shellSpaces.map((space) => ({
@@ -210,6 +227,12 @@ export const App: React.FC = () => {
   );
   const selectedSpaceId = activeSpaceId;
   const setViewMode = setShellViewMode;
+  const [selectedAgent, setSelectedAgent] = useState<string | undefined>(undefined);
+
+  const handleSelectAgent = useCallback((agentSlug: string) => {
+    setSelectedAgent(agentSlug);
+    setViewMode("dedicated");
+  }, [setViewMode]);
 
   const resolveErrorMessage = useCallback((err: unknown, fallback: string) => {
     if (err instanceof ApiError) {
@@ -307,6 +330,9 @@ export const App: React.FC = () => {
   const [commentsByTask, setCommentsByTask] = useState<Record<string, TaskComment[]>>({});
   const [commentsLoading, setCommentsLoading] = useState(false);
   const commentsAbortRef = useRef<AbortController | null>(null);
+  const [activityByTask, setActivityByTask] = useState<Record<string, ActivityEvent[]>>({});
+  const [activityLoading, setActivityLoading] = useState(false);
+  const activityAbortRef = useRef<AbortController | null>(null);
   const [taskFilters, setTaskFilters] = useState<TaskFilters>({ ...DEFAULT_TASK_FILTERS });
   const [customFieldsByTask, setCustomFieldsByTask] = useState<Record<string, CustomFieldValue[]>>({});
   const [customFieldsLoading, setCustomFieldsLoading] = useState(false);
@@ -653,6 +679,48 @@ export const App: React.FC = () => {
       setCommentsLoading(false);
     };
   }, [apiFetch, isTaskDrawerOpen, activeTaskId, commentsByTask]);
+
+  useEffect(() => {
+    if (!isTaskDrawerOpen || !activeTaskId) {
+      return;
+    }
+
+    if (activityByTask[activeTaskId]) {
+      return;
+    }
+
+    const controller = new AbortController();
+    activityAbortRef.current?.abort();
+    activityAbortRef.current = controller;
+    setActivityLoading(true);
+
+    apiFetch(`${API_BASE}/tasks/${activeTaskId}/activity`, {
+      headers: { "x-tenant-id": TENANT_ID, "x-user-id": USER_ID },
+      signal: controller.signal
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load activity: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data: ActivityEvent[]) => {
+        setActivityByTask((prev) => ({ ...prev, [activeTaskId]: data }));
+        setActivityLoading(false);
+        activityAbortRef.current = null;
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.error("Failed to fetch activity", err);
+        setActivityLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+      activityAbortRef.current = null;
+      setActivityLoading(false);
+    };
+  }, [apiFetch, isTaskDrawerOpen, activeTaskId, activityByTask]);
 
   useEffect(() => {
     if (!isTaskDrawerOpen || !activeTaskId) {
@@ -1227,6 +1295,15 @@ export const App: React.FC = () => {
     return allLists.find((l) => l.list.list_id === selectedListId) ?? null;
   }, [allLists, selectedListId]);
 
+  const calendarTasks = useMemo(() => {
+    if (selectedListId) {
+      return filteredTasksByList[selectedListId] ?? [];
+    }
+    return Object.values(filteredTasksByList).flat();
+  }, [filteredTasksByList, selectedListId]);
+
+  const calendarListLabel = selectedList ? selectedList.list.name : "All lists";
+
   const selectedTask = useMemo(() => {
     if (!activeTaskId) return null;
     for (const listTasks of Object.values(tasks)) {
@@ -1456,16 +1533,24 @@ export const App: React.FC = () => {
   );
 
   const handleAddComment = useCallback(
-    async (taskId: string, body: string) => {
+    async (taskId: string, body: string, mentions?: string[]) => {
       try {
         const comment = await client.request<TaskComment>({
           path: "/comments",
           method: "POST",
-          body: { task_id: taskId, body, mentions: [] }
+          body: { task_id: taskId, body, mentions: mentions ?? [] }
         });
         setCommentsByTask((prev) => {
           const next = { ...prev };
           next[taskId] = [...(next[taskId] ?? []), comment];
+          return next;
+        });
+        setActivityByTask((prev) => {
+          if (!prev[taskId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[taskId];
           return next;
         });
       } catch (err) {
@@ -2024,6 +2109,9 @@ export const App: React.FC = () => {
     }
     return (
       <div className="dashboard-view">
+        {showKairosSuggestions && (
+          <KairosSuggestionsPanel className="dashboard-kairos" />
+        )}
         <DashboardGrid
           widgets={dashboardWidgets}
           isEditing={isEditingDashboard}
@@ -2043,10 +2131,63 @@ export const App: React.FC = () => {
       mainContent = renderBoardView();
       break;
     case "calendar":
-      mainContent = <CalendarView hasSelection={!!selectedListId} />;
+      mainContent = (
+        <CalendarView
+          hasSelection={!!selectedListId}
+          listLabel={calendarListLabel}
+          tasks={calendarTasks}
+        />
+      );
       break;
     case "dashboard":
-      mainContent = renderDashboardView();
+      mainContent = (
+        <DashboardView
+          tasks={calendarTasks}
+          onOpenTask={handleOpenTask}
+          onAcceptInsight={(id) => showToast({ message: `Insight "${id}" accepted`, variant: "success" })}
+          onDeclineInsight={(id) => showToast({ message: `Insight "${id}" dismissed`, variant: "info" })}
+        />
+      );
+      break;
+    case "xoxo":
+      mainContent = <XoXoView />;
+      break;
+    case "gantt":
+      mainContent = <GanttView />;
+      break;
+    case "inbox":
+      mainContent = (
+        <InboxView
+          tasks={calendarTasks}
+          onOpenTask={handleOpenTask}
+          onCompleteTask={(taskId) => {
+            void handleUpdateTask(taskId, { status: "done" });
+            showToast({ message: "Task marked complete", variant: "success" });
+          }}
+          onSnoozeTask={(taskId, until) => {
+            void handleUpdateTask(taskId, { status: "snoozed" });
+            showToast({ message: `Task snoozed until ${new Date(until).toLocaleString()}`, variant: "info" });
+          }}
+          onDelegateTask={(taskId) => {
+            handleOpenTask(taskId);
+            showToast({ message: "Open task to delegate to a team member", variant: "info" });
+          }}
+        />
+      );
+      break;
+    case "goals":
+      mainContent = (
+        <GoalsView
+          tasks={calendarTasks}
+          onOpenTask={handleOpenTask}
+        />
+      );
+      break;
+    case "docs":
+      mainContent = <DocsView />;
+      break;
+    case "dedicated":
+      mainContent = <DedicatedView initialAgent={selectedAgent} />;
       break;
     case "claims":
       mainContent = (
@@ -2095,6 +2236,8 @@ export const App: React.FC = () => {
       onSelectList={handleSelectList}
       listCounts={listCounts}
       spaceCounts={spaceCounts}
+      selectedAgent={selectedAgent}
+      onSelectAgent={handleSelectAgent}
     />
   );
 
@@ -2110,6 +2253,8 @@ export const App: React.FC = () => {
         claimSearchTerm={claimSearchTerm}
         onClaimSearchTermChange={setClaimSearchTerm}
         claimSearchRef={claimSearchInputRef}
+        aiPersona={preferences.aiPersona}
+        onAiPersonaChange={setAiPersona}
       />
       {viewMode === "dashboard" ? (
         <div className="dashboard-header">
@@ -2186,6 +2331,17 @@ export const App: React.FC = () => {
         open={isChatOverlayOpen}
         onClose={() => setIsChatOverlayOpen(false)}
       />
+      {showDydactDock && (
+        <DydactDock
+          onOpenChat={() => setIsChatOverlayOpen(true)}
+          onOpenInsights={() => {
+            setViewMode("dashboard");
+          }}
+          onOpenAgents={() => {
+            // Future: Open agent management panel
+          }}
+        />
+      )}
       <ColumnSettingsDrawer
         isOpen={isColumnSettingsOpen}
         options={DEFAULT_COLUMNS}
@@ -2201,6 +2357,8 @@ export const App: React.FC = () => {
         onUpdate={handleUpdateTask}
         comments={activeTaskId ? commentsByTask[activeTaskId] ?? [] : []}
         commentsLoading={commentsLoading}
+        activityEvents={activeTaskId ? activityByTask[activeTaskId] ?? [] : []}
+        activityLoading={activityLoading}
         onAddComment={handleAddComment}
         customFields={currentCustomFields}
         customFieldsLoading={customFieldsLoading}

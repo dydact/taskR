@@ -31,6 +31,8 @@ export class ClaimsApiError extends Error {
 
 export const createClaimsApi = (config: ClaimsApiConfig) => {
   const fetchImpl = config.fetchImpl ?? fetch;
+  const baseLower = config.baseUrl.toLowerCase();
+  const isScrHost = baseLower.includes("scr");
   const request = async <T>({ path, method = "GET", query, signal }: RequestOptions): Promise<T> => {
     const url = `${config.baseUrl}${path}${buildQueryString(query)}`;
     const response = await fetchImpl(url, {
@@ -62,7 +64,7 @@ export const createClaimsApi = (config: ClaimsApiConfig) => {
       }),
     getClaimEvents: (claimId: string) =>
       request<{ data?: ClaimEvent[] } | ClaimEvent[]>({
-        path: `/scr/api/claims/${claimId}/events`
+        path: isScrHost ? `/scr/api/claims/${claimId}/events` : `/v1/scr/api/claims/${claimId}/events`
       })
   };
 };
@@ -85,4 +87,3 @@ export type ClaimEvent = {
   description?: string;
   [key: string]: unknown;
 };
-

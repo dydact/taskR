@@ -1,6 +1,6 @@
 # Kairos Intent Schema (Draft)
 
-Status: Draft -- pending vendor handshake and vNdydact delivery.
+Status: Draft -- pending vendor handshake and dydact delivery.
 
 ## Purpose
 - Structure intent hand-offs between Kairos chat surfaces and TaskR automation.

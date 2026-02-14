@@ -92,5 +92,5 @@ colima stop && colima start
     - HR widgets show open clocks, pending timesheets, payroll totals
 
 ## References
-- vNdydact/docs/runbooks/colima_migration.md
-- vNdydact/docs/plans/dydact_chat_alpha_plan.md
+- dydact/docs/runbooks/colima_migration.md
+- dydact/docs/plans/dydact_chat_alpha_plan.md

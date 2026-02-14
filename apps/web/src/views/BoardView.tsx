@@ -1,9 +1,10 @@
-import React, { useMemo } from "react";
-import { DndContext, DragEndEvent, KeyboardSensor, PointerSensor, closestCorners, useSensor, useSensors } from "@dnd-kit/core";
+import React, { useMemo, useState } from "react";
+import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Task } from "../types/task";
 import type { HierarchyList } from "../types/hierarchy";
 import { Column } from "../components/Column";
+import { TaskCardOverlay } from "../components/TaskCardOverlay";
 
 type BoardViewProps = {
   selectedList: HierarchyList | null;
@@ -27,6 +28,21 @@ export const BoardView: React.FC<BoardViewProps> = ({
   onDragEnd
 }) => {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
+  const [activeDragTask, setActiveDragTask] = useState<Task | null>(null);
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const draggedTaskId = event.active.id as string;
+    const allTasks = Object.values(tasksByList).flat();
+    const task = allTasks.find((t) => t.task_id === draggedTaskId);
+    if (task) {
+      setActiveDragTask(task);
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveDragTask(null);
+    onDragEnd(event);
+  };
 
   const tasks = useMemo(() => {
     if (!selectedList) return [];
@@ -66,7 +82,12 @@ export const BoardView: React.FC<BoardViewProps> = ({
       <div className="hotkey-hint">
         Select a task card and use <kbd>[</kbd> or <kbd>]</kbd> to send feedback without leaving the board.
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onDragEnd}>
+      <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
         {selectedList.statuses.map((status) => (
           <SortableContext
             key={status.status_id}
@@ -81,9 +102,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
               onFeedback={onPreferenceFeedback}
               activeTaskId={activeTaskId ?? undefined}
               onSelectTask={onOpenTask}
+              isDraggingTask={activeDragTask !== null}
             />
           </SortableContext>
         ))}
+        <DragOverlay dropAnimation={{ duration: 200, easing: "ease-out" }}>
+          {activeDragTask ? <TaskCardOverlay task={activeDragTask} /> : null}
+        </DragOverlay>
       </DndContext>
     </div>
   );
