@@ -1,0 +1,70 @@
+/* === Dojo Design System Bridge ===
+ *
+ * Maps standalone TaskR --plane-* variables to Dojo/Shadcn design tokens.
+ * Import this file AFTER variables.css to enable incremental migration:
+ *   - Components can start using Dojo token names (--background, --foreground, etc.)
+ *   - The --plane-* originals remain for backward compatibility
+ *   - When full Tailwind migration happens, this file becomes the only source of truth
+ *
+ * Mapping reference:
+ *   --plane-bg-solid  (#0f172a)       → --background (oklch dark)
+ *   --plane-surface   (rgba glass)    → --card
+ *   --plane-accent    (#6c7bff)       → --primary
+ *   --plane-text      (#f8fafc)       → --foreground
+ *   --plane-muted     (#94a3b8)       → --muted-foreground
+ *   --plane-border    (rgba 0.18)     → --border
+ *   --plane-danger    (#ff6b6b)       → --destructive
+ *   --plane-success   (#4ad0a7)       → --color-emerald-400
+ *   --plane-warning   (#f7b23b)       → --color-amber-400
+ *   --plane-info      (#38bdf8)       → --color-sky-400
+ */
+
+:root {
+  /* Shadcn/Dojo base tokens → sourced from --plane-* values */
+  --background: var(--plane-bg-solid);
+  --foreground: var(--plane-text);
+
+  --card: var(--plane-surface);
+  --card-foreground: var(--plane-text);
+
+  --popover: var(--plane-surface-elevated);
+  --popover-foreground: var(--plane-text);
+
+  --primary: var(--plane-accent);
+  --primary-foreground: #ffffff;
+
+  --secondary: var(--plane-surface-muted);
+  --secondary-foreground: var(--plane-text-soft);
+
+  --muted: var(--plane-surface-muted);
+  --muted-foreground: var(--plane-muted);
+
+  --accent: var(--plane-accent-soft);
+  --accent-foreground: var(--plane-accent);
+
+  --destructive: var(--plane-danger);
+  --destructive-foreground: #ffffff;
+
+  --border: var(--plane-border);
+  --input: var(--plane-border);
+  --ring: var(--plane-accent);
+
+  /* Semantic status colors (Tailwind name convention) */
+  --color-emerald-400: var(--plane-success);
+  --color-amber-400: var(--plane-warning);
+  --color-red-400: var(--plane-danger);
+  --color-sky-400: var(--plane-info);
+
+  /* Sidebar mapping */
+  --sidebar-background: var(--plane-sidebar);
+  --sidebar-foreground: var(--plane-text-soft);
+  --sidebar-border: var(--plane-border);
+  --sidebar-accent: var(--plane-accent-soft);
+  --sidebar-accent-foreground: var(--plane-accent);
+
+  /* Glass surface tokens (premium visual layer) */
+  --glass-bg: var(--plane-surface);
+  --glass-border: var(--plane-glass-border);
+  --glass-glow: var(--plane-glow);
+  --glass-shadow: var(--plane-shadow-strong);
+}
